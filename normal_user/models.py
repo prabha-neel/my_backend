@@ -1,5 +1,5 @@
 # models.py
-from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.utils import timezone
 import time
@@ -22,8 +22,7 @@ class SoftDeleteQuerySet(models.QuerySet):
 class SoftDeleteManager(models.Manager):
     def get_queryset(self):
         return SoftDeleteQuerySet(self.model, using=self._db).active()
-
-
+    
 class AllObjectsManager(models.Manager):
     def get_queryset(self):
         return SoftDeleteQuerySet(self.model, using=self._db)
@@ -72,10 +71,12 @@ class NormalUser(AbstractUser):
     )
 
     # Managers
-    objects = BaseUserManager()           # Default Django auth ke liye
-    active_objects = SoftDeleteManager()  # Sirf active users
-    all_objects = AllObjectsManager()     # Sab including deleted
+    objects = UserManager()                 # Default Django auth ke liye
+    active_objects = SoftDeleteManager()    # Sirf active users
+    all_objects = AllObjectsManager()       # Sab including deleted
 
+    REQUIRED_FIELDS = ['email', 'mobile', 'dob']
+    
     class Meta:
         verbose_name = 'User'
         verbose_name_plural = 'Users'
