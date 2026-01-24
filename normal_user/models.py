@@ -3,6 +3,7 @@ from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.utils import timezone
 import time
+from django.conf import settings
 
 
 class SoftDeleteQuerySet(models.QuerySet):
@@ -42,12 +43,13 @@ class NormalUser(AbstractUser):
         ('O+', 'O+'), ('O-', 'O-'),
     )
 
-    ROLE_CHOICES = [
-        ('NORMAL', 'Normal'),
-        ('STUDENT', 'Student'),
-        ('TEACHER', 'Teacher'),
-        ('PARENT', 'Parent'),
-    ]
+    class Roles(models.TextChoices):
+        SUPER_ADMIN = 'SUPER_ADMIN', 'Super Admin'
+        SCHOOL_ADMIN = 'SCHOOL_ADMIN', 'School Admin'
+        TEACHER = 'TEACHER', 'Teacher'
+        STUDENT = 'STUDENT', 'Student'
+        PARENT = 'PARENT', 'Parent'
+        GUEST = 'GUEST', 'Independent User'
 
     # Profile Fields
     mobile = models.CharField(max_length=15, unique=True, db_index=True)
@@ -57,7 +59,19 @@ class NormalUser(AbstractUser):
     address = models.TextField(blank=True, null=True)
 
     email = models.EmailField(unique=True, db_index=True)
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='NORMAL')
+    role = models.CharField(max_length=20, choices=Roles.choices, default=Roles.GUEST)
+    
+    @property
+    def is_school_admin(self):
+        return self.role == self.Roles.SCHOOL_ADMIN
+
+    @property
+    def is_teacher(self):
+        return self.role == self.Roles.TEACHER
+
+    @property
+    def is_student(self):
+        return self.role == self.Roles.STUDENT
 
     # Soft Delete & Audit
     is_deleted = models.BooleanField(default=False, db_index=True)
@@ -136,3 +150,34 @@ class NormalUser(AbstractUser):
     def permanent_delete(self):
         """Admin only – real delete"""
         super().delete()
+
+
+
+class Notification(models.Model):
+    NOTIFICATION_TYPES = (
+        ('info', 'Information'),
+        ('success', 'Success'),
+        ('warning', 'Warning'),
+        ('error', 'Error'),
+    )
+
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='notifications'
+    )
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES, default='info')
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at'] # Naye notification sabse upar dikhenge
+
+    def __str__(self):
+        return f"{self.recipient.username} - {self.title}"
+    
+
+
+    

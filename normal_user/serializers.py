@@ -4,6 +4,8 @@ from django.contrib.auth import authenticate
 from django.core.validators import RegexValidator
 from .models import NormalUser
 import re
+from .models import Notification
+
 
 mobile_regex = RegexValidator(
     regex=r'^[6-9]\d{9}$',
@@ -109,3 +111,10 @@ class AccountDeleteSerializer(serializers.Serializer):
         if not value or value.strip() == '':
             raise serializers.ValidationError("Password cannot be empty.")
         return value
+    
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'title', 'message', 'notification_type', 'is_read', 'created_at']
+        read_only_fields = ['id', 'created_at']

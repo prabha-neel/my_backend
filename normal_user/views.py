@@ -2,7 +2,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework import status
+from rest_framework import status, generics
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.db import transaction, IntegrityError
@@ -11,9 +11,9 @@ from django_ratelimit.decorators import ratelimit
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.throttling import UserRateThrottle
 import logging
-
-from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer
-from .models import NormalUser
+from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer, NotificationSerializer
+from .models import NormalUser, Notification
+from .utils import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
         409: OpenApiResponse(description="User already exists"),
     }
 )
+@method_decorator(ratelimit(key='ip', rate='2/m', method='POST', block=True), name='post')
 class SignupView(APIView):
     permission_classes = [AllowAny]
 
@@ -41,6 +42,12 @@ class SignupView(APIView):
         try:
             with transaction.atomic():
                 user = serializer.save()
+            create_notification(
+                    user, 
+                    "Welcome aboard! 🚀", 
+                    f"Hi {user.first_name or user.username}, your account has been created successfully.", 
+                    "success"
+                )
         except IntegrityError:
             return Response({
                 "success": False,
@@ -195,6 +202,28 @@ class UserSoftDeleteView(APIView):
             "message": "Account deleted successfully. We're sad to see you go!"
         }, status=status.HTTP_200_OK)
 
+
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Sirf wahi notifications dikhao jo logged-in user ke hain
+        return Notification.objects.filter(recipient=self.request.user)
+
+class MarkNotificationReadView(generics.UpdateAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        try:
+            notification = Notification.objects.get(pk=pk, recipient=request.user)
+            notification.is_read = True
+            notification.save()
+            return Response({"success": True, "message": "Marked as read"})
+        except Notification.DoesNotExist:
+            return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
+        
 # # views.py
 # from rest_framework.views import APIView
 # from rest_framework.response import Response

@@ -14,12 +14,38 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+
+    # Existing apps
     path('normal_user/', include("normal_user.urls")),
+
+    # Classroom module (industry standard versioned API)
+    path('api/v1/classroom/', include('students_classroom.urls')),
+    
+    #Organiations module
+    path('api/v1/organizations/', include('organizations.urls')),
+
+    path('api/v1/students/', include('students.urls')),
+
+    path('api/v1/parents/', include('parents.urls')),
+    
+    path('api/v1/teachers/', include('teachers.urls')),
+
+    # Auth
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
+    # API Schema & Docs
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path(
+        'api/schema/docs/',
+        SpectacularSwaggerView.as_view(url_name='schema'),
+        name='swagger-ui',
+    ),
 ]
