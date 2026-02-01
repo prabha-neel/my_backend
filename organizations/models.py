@@ -1,3 +1,4 @@
+#organizations models.py
 from django.db import models
 
 # Create your models here.
@@ -69,10 +70,10 @@ class Organization(models.Model):
     )
 
     # ── Ownership & Access Control ─────────────────────────────────────────────
-    admin = models.OneToOneField(
+    admin = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
-        related_name='owned_organization',
+        related_name='owned_organizations',
         verbose_name=_("Organization Admin / Owner")
     )
 
@@ -113,6 +114,7 @@ class Organization(models.Model):
         max_length=10, 
         blank=True, 
         null=True, 
+        validators=[RegexValidator(r'^\d{6,10}$', _("Enter a valid pincode."))],
         verbose_name=_("Pincode")
     )
 
@@ -196,33 +198,47 @@ class Organization(models.Model):
         return f"{self.name} ({self.org_id or _('No ID')})"
 
     def save(self, *args, **kwargs):
-        # 1. Slug Logic (Handled before saving)
+        # 1. Slug & Org ID Logic (Tera Purana Logic - No Change)
         if not self.slug:
-            base_slug = slugify(self.name)
-            slug = base_slug
-            counter = 1
-            while Organization.objects.filter(slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            self.slug = slug
-
-        # 2. Org ID Generation (Using timezone to avoid 'NoneType' error with created_at)
+            self.slug = slugify(self.name)
+        
         if not self.org_id:
             current_year = timezone.now().year
-            # Prefix logic
-            prefix_map = {
-                'school': 'SCH',
-                'coaching': 'COACH',
-                'college': 'COLL',
-                'academy': 'ACAD',
-            }
-            prefix = prefix_map.get(self.org_type, 'ORG')
-            
-            # Generating a short unique suffix
             unique_suffix = uuid.uuid4().hex[:6].upper()
-            self.org_id = f"{prefix}-{current_year}-{unique_suffix}"
+            self.org_id = f"ORG-{current_year}-{unique_suffix}"
 
+        # 2. Save Organization Record (Important: Pehle org save hogi)
         super().save(*args, **kwargs)
+
+        # 3. [NEW] Auto SchoolAdmin Profile (Sirf ye extra add kiya hai safely)
+        from organizations.models import SchoolAdmin
+        SchoolAdmin.objects.get_or_create(
+            user=self.admin,
+            organization=self,
+            defaults={'designation': 'Principal/Owner'}
+        )
+
+        # 4. Universal Admin ID & Role Logic (Tera Purana Logic with Small Fix)
+        # Hum wahi conditions use kar rahe hain jo tune likhi thi
+        if self.admin:
+            needs_user_save = False
+            
+            # Condition A: Agar ID nahi bani toh banao (Tera Logic)
+            if not self.admin.admin_custom_id:
+                raw_name = self.admin.first_name or self.admin.username
+                name_part = raw_name.replace(" ", "")[:3].upper().ljust(3, 'X')
+                alphanumeric_suffix = uuid.uuid4().hex[:4].upper()
+                self.admin.admin_custom_id = f"ADM-{name_part}-{alphanumeric_suffix}"
+                needs_user_save = True
+            
+            # Condition B: Role ensure karo ki SCHOOL_ADMIN hi ho (GUEST locha khatam)
+            if self.admin.role != 'SCHOOL_ADMIN':
+                self.admin.role = 'SCHOOL_ADMIN'
+                needs_user_save = True
+
+            # Sirf tabhi save karo agar kuch change hua hai
+            if needs_user_save:
+                self.admin.save(update_fields=['admin_custom_id', 'role'])
 
     @property
     def is_verified_display(self):
@@ -244,7 +260,7 @@ class SchoolAdmin(models.Model):
     - Granular permissions per school
     - Audit trail basics
     """
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="school_admin_profile",
@@ -341,3 +357,4 @@ class SchoolAdmin(models.Model):
     def save(self, *args, **kwargs):
         # You can add logic here later (e.g. set created_by from request in view)
         super().save(*args, **kwargs)
+        

@@ -1,3 +1,4 @@
+#views.py
 import logging
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -12,6 +13,12 @@ from .models import Organization, SchoolAdmin
 from .serializers import OrganizationSerializer, SchoolAdminProfileSerializer
 from django.contrib.auth import get_user_model
 User = get_user_model()
+from .serializers import (
+    OrganizationSerializer, 
+    OrganizationDetailSerializer,
+    SchoolAdminProfileSerializer,
+    SchoolAdminUserSerializer     # <--- Login logic ke liye zaruri hai
+)
 
 # Custom Permissions Import (Inhe check kar lena tumhare permissions.py mein hain)
 # from .permissions import IsStaffOrReadOnly, IsOrganizationMember
@@ -45,11 +52,23 @@ class OrganizationViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'registration_number', 'domain']
     ordering_fields = ['created_at', 'name', 'updated_at']
     ordering = ['-created_at']
+
+    queryset = Organization.objects.all()
+    
+    def get_serializer_class(self):
+        # Agar user GET request kar raha hai (List ya Detail dekh raha hai)
+        if self.action in ['list', 'retrieve']:
+            return OrganizationDetailSerializer
+        
+        # Agar user POST/PUT kar raha hai (Naya school bana raha hai)
+        return OrganizationSerializer
     
     def get_permissions(self):
-        """Dynamic permission logic: Only staff can create/delete/update orgs."""
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        # 'create' aur 'destroy' sirf Super-Admin (staff) ke liye rakho
+        if self.action in ['create', 'destroy']:
             return [permissions.IsAdminUser()]
+        
+        # 'update' aur 'partial_update' principal bhi kar sakega (agar uska school hai)
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
@@ -74,8 +93,23 @@ class OrganizationViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        """Saves with Audit Trail: who created this org."""
+        """Saves with Audit Trail and auto-upgrades user role to ADMIN."""
+        # 1. Organization save karo
         org = serializer.save(created_by=self.request.user)
+        
+        # 2. Jo user is organization ka admin ban raha hai, uska role update karo
+        # Hum serializer.validated_data se admin user nikalenge
+        admin_user = serializer.validated_data.get('admin') 
+        
+        if admin_user:
+            # Agar user GUEST hai toh use ADMIN bana do
+            if admin_user.role != 'SCHOOL_ADMIN':
+                admin_user.role = 'SCHOOL_ADMIN'
+                # admin_custom_id generate karne wala logic agar model save par hai 
+                # toh ye automatically trigger ho jayega
+                admin_user.save()
+                logger.info(f"User ID: {admin_user.id} role upgraded to ADMIN for Org: {org.name}")
+
         logger.info(f"Organization '{org.name}' (ID: {org.id}) created by User: {self.request.user.id}")
 
     @transaction.atomic
@@ -83,62 +117,6 @@ class OrganizationViewSet(viewsets.ModelViewSet):
         # Agar models mein 'updated_by' nahi hai, toh sirf save() likho
         serializer.save() 
         logger.info(f"Organization ID: {serializer.instance.id} updated by User: {self.request.user.id}")
-
-    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAdminUser])
-    def create_school_with_admin(self, request):
-        """
-        SUPER-ADMIN ONLY: Creates User -> Creates Organization -> Creates SchoolAdmin Profile.
-        As per your Model: Organization needs an 'admin' (User) during creation.
-        """
-        data = request.data
-        try:
-            with transaction.atomic():
-                # 1. Create/Get the Admin User
-                admin_user, created = User.objects.get_or_create(
-                    email=data.get('admin_email'),
-                    defaults={
-                        'username': data.get('admin_username'),
-                        'first_name': data.get('admin_first_name', 'Admin'),
-                        'is_staff': False,
-                    }
-                )
-                if created:
-                    admin_user.set_password(data.get('admin_password', 'TempPass@123'))
-                    admin_user.save()
-
-                # 2. Create Organization (Matching your Model fields)
-                # Note: Aapke model mein 'admin' field OneToOne hai, isliye hum admin_user pass kar rahe hain.
-                new_org = Organization.objects.create(
-                    name=data.get('org_name'),
-                    org_type=data.get('org_type', 'school'),
-                    registration_number=data.get('reg_number', ''),
-                    admin=admin_user,
-                    created_by=request.user,  # <--- Ye ab Super-Admin ki ID save karega
-                    is_active=True
-                )
-                
-                # 3. Create SchoolAdmin Profile (Matching your SchoolAdmin model)
-                school_admin = SchoolAdmin.objects.create(
-                    user=admin_user,
-                    organization=new_org,
-                    designation=data.get('designation', 'Principal/Owner'),
-                    is_active=True,
-                    created_by=request.user # Super-Admin
-                )
-
-                return Response({
-                    "status": "success",
-                    "message": f"Organization '{new_org.name}' and Admin Profile created.",
-                    "details": {
-                        "org_id": new_org.org_id, # Your auto-generated ID
-                        "slug": new_org.slug,
-                        "admin_username": admin_user.username
-                    }
-                }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            logger.error(f"Setup failed: {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
 # ────────────────────────────────────────────────
 # 3. SchoolAdminProfile ViewSet (Profile Management)
@@ -159,18 +137,15 @@ class SchoolAdminViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        # Prevent N+1 queries by joining user and organization tables
         base_qs = SchoolAdmin.objects.select_related('user', 'organization').all()
-
         user = self.request.user
+        
         if user.is_staff:
             return base_qs
 
-        # Secure isolation: Only return the logged-in user's profile
-        if hasattr(user, 'school_admin_profile'):
-            return base_qs.filter(user=user)
-
-        raise PermissionDenied("Access Denied: No associated school admin profile found.")
+        # Filter by user in the SchoolAdmin junction table
+        return base_qs.filter(user=user)
+    
 
     @transaction.atomic
     def perform_create(self, serializer):

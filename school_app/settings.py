@@ -114,6 +114,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Custom User Model - Already sahi
 AUTH_USER_MODEL = 'normal_user.NormalUser'
 
+# Custom Authentication Backends
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',  # Default login (Username/Email)
+    'normal_user.backends.MultiUserMobileBackend',  # Tera naya logic (Mobile/Multiple Accounts)
+]
+
 # DRF Settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

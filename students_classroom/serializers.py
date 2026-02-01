@@ -12,17 +12,19 @@ from students.models import StudentProfile
 # ────────────────────────────────────────────────
 
 class StandardListSerializer(serializers.ModelSerializer):
-    # 🎯 1. Organization field ko yahan add karein (HiddenField)
-    # Isse validator ko 'organization' mil jayegi par frontend ko nahi dikhegi
+    # 🎯 1. school_id ko input mein lenge (POST request ke liye)
+    school_id = serializers.UUIDField(write_only=True, required=False)
+    
+    # 🎯 2. Organization field (Hidden) - backend handle karega
     organization = serializers.HiddenField(default=None)
     teacher_name = serializers.ReadOnlyField(source='class_teacher.user.get_full_name')
 
     class Meta:
         model = Standard
-        fields = ("id", "name", "description", "organization","class_teacher","teacher_name")
-        read_only_fields = ("id","teacher_name")
+        fields = ("id", "school_id", "name", "description", "organization", "class_teacher", "teacher_name")
+        read_only_fields = ("id", "teacher_name")
 
-        # 🎯 Ye validator 500 Error ki jagah "Class already exists" ka message dega
+        # Validator waisa hi rahega
         validators = [
             UniqueTogetherValidator(
                 queryset=Standard.objects.all(),
@@ -31,13 +33,34 @@ class StandardListSerializer(serializers.ModelSerializer):
             )
         ]
 
-    def validate_organization(self, value):
+    # 🎯 3. Yahan aati hai asli Surgery (validate method)
+    def validate(self, attrs):
         user = self.context['request'].user
-        if hasattr(user, 'school_admin_profile'):
-            # Admin ki organization auto-select ho jayegi
-            return user.school_admin_profile.organization
-        raise serializers.ValidationError("Sirf School Admin hi class bana sakte hain!")
-    
+        # JSON body se school_id uthao
+        school_id = attrs.get('school_id') or self.initial_data.get('school_id')
+
+        # Admin Logic
+        if hasattr(user, 'school_admin_profile') and user.school_admin_profile.exists():
+            if not school_id:
+                raise ValidationError({"school_id": "Admin bhai, school_id dena zaroori hai!"})
+            
+            # RelatedManager error se bachne ke liye filter use kiya
+            admin_prof = user.school_admin_profile.filter(organization_id=school_id).first()
+            if not admin_prof:
+                raise ValidationError({"school_id": "Aap is school ke admin nahi ho!"})
+            
+            attrs['organization'] = admin_prof.organization
+            
+        # Teacher Logic (Safe fallback)
+        elif hasattr(user, 'teacher_profile'):
+            attrs['organization'] = user.teacher_profile.organization
+        else:
+            raise PermissionDenied("Sirf Admin ya Teacher hi class create kar sakte hain!")
+
+        # school_id ko attrs se hata do taaki Model save karte waqt 'unexpected field' error na de
+        attrs.pop('school_id', None)
+        return attrs
+
     def create(self, validated_data):
         return super().create(validated_data)
 
@@ -59,64 +82,71 @@ class StandardDetailSerializer(serializers.ModelSerializer):
 # 2. ClassroomSession Serializers
 # ────────────────────────────────────────────────
 
+# school_app/students_classroom/serializers.py
+
 class SessionCreateSerializer(serializers.ModelSerializer):
-    # 'student_limit' ko API mein 'limit' dikhayenge
+    school_id = serializers.PrimaryKeyRelatedField(
+        source='organization',
+        queryset=Standard._meta.get_field('organization').remote_field.model.objects.all(),
+        required=False, 
+        allow_null=True
+    )
+    
     limit = serializers.IntegerField(source='student_limit')
-    
-    # Organization ki UUID response mein laane ke liye
-    organization_id = serializers.ReadOnlyField(source='organization.id')
-    
-    # Session code ko explicitly field mein daala taaki response mein aaye
     session_code = serializers.ReadOnlyField()
 
     class Meta:
         model = ClassroomSession
-        # In fields ko response mein laane ke liye yahan add kiya
-        fields = ("id", "session_code", "organization_id", "title", "purpose", 
+        fields = ("id", "session_code", "school_id", "title", "purpose", 
                   "target_standard", "limit", "expires_at")
 
-    def validate_expires_at(self, value):
-        if value <= timezone.now():
-            raise ValidationError("Expiry must be in the future.")
-        return value
-
-    # 2. Yahan smart validation lagayi
     def validate(self, attrs):
         user = self.context['request'].user
-        purpose = attrs.get('purpose')
+        purpose = attrs.get('purpose', 'STUDENT')
         target_standard = attrs.get('target_standard')
+        organization = attrs.get('organization')
 
-        # 🎯 SECURITY CHECK: Teacher sirf apni class ke liye session banaye
+        # -----------------------------------------------------------
+        # 1. 🟢 CLASS TEACHER LOGIC
+        # -----------------------------------------------------------
         if hasattr(user, 'teacher_profile'):
             teacher = user.teacher_profile
+            attrs['purpose'] = 'STUDENT' # Teacher hiring nahi kar sakta
+            attrs['organization'] = teacher.organization # Auto-set school
             
-            # Agar session Students ke liye hai
-            if purpose == 'STUDENT':
-                if not target_standard:
-                    raise ValidationError({"target_standard": "Bhai, class batana zaroori hai."})
-                
-                # Check: Kya ye wahi class hai jiska ye teacher 'class_teacher' hai?
-                if target_standard.class_teacher != teacher:
-                    raise PermissionDenied(
-                        f"Bhai, aap sirf '{target_standard.name}' ke liye session nahi bana sakte "
-                        "kyunki aap iske assigned class teacher nahi ho!"
-                    )
+            if not target_standard:
+                raise ValidationError({"target_standard": "Bhai, class select karna zaroori hai."})
+            
+            if target_standard.class_teacher != teacher:
+                raise PermissionDenied(f"Aap sirf '{target_standard.name}' ke liye session bana sakte ho.")
+
+        # -----------------------------------------------------------
+        # 2. 🔵 ADMIN LOGIC
+        # -----------------------------------------------------------
+        elif hasattr(user, 'school_admin_profile'):
+            if not organization:
+                 raise ValidationError({"school_id": "Admin bhai, school_id dena zaroori hai."})
+            
+            # Check: Kya admin is school ka hai?
+            if not user.school_admin_profile.filter(organization=organization).exists():
+                raise PermissionDenied("Aap is school ke admin nahi ho!")
+
+            # 🛡️ NEW ADDITION: Cross-School Safety Check
+            # Pakka karo ki jo class (standard) select ki hai wo usi school ki hai
+            if target_standard and target_standard.organization != organization:
+                raise ValidationError({
+                    "target_standard": f"Bhai, '{target_standard.name}' aapke select kiye huye school ki class nahi hai!"
+                })
 
         return attrs
 
     def create(self, validated_data):
-        request = self.context.get("request")
-        user = request.user
+        user = self.context['request'].user
         
-        if hasattr(user, "teacher_profile"):
-            validated_data["teacher"] = user.teacher_profile
-            validated_data["organization"] = user.teacher_profile.organization
-        elif hasattr(user, "school_admin_profile"):
-            validated_data["organization"] = user.school_admin_profile.organization
-            validated_data["teacher"] = None 
-        else:
-            raise PermissionDenied("Only Teachers or Admins can create sessions.")
-        
+        # Teacher ke liye auto-assign teacher profile
+        if hasattr(user, 'teacher_profile'):
+            validated_data['teacher'] = user.teacher_profile
+            
         return super().create(validated_data)
 
 class SessionListSerializer(serializers.ModelSerializer):
@@ -171,30 +201,38 @@ class JoinRequestCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         user = self.context["request"].user
-        
-        # 🟢 NEW SECURITY CHECKS START HERE ──────────────────────────────
-        
-        # 🛑 1. Check: Kya ye Admin hai?
-        if hasattr(user, 'school_admin_profile'):
-            raise ValidationError("Bhai, aap Admin ho! Admin kabhi student nahi banta.")
-
-        # 🛑 2. Check: Kya ye Teacher hai?
-        if hasattr(user, 'teacher_profile'):
-            raise ValidationError("Bhai, aap Teacher ho! Master hokar bench par mat baitho.")
-
-        # 🛑 3. Check: Kya ye pehle se hi kisi class ka Student hai?
-        if hasattr(user, 'student_profile'):
-            student = user.student_profile
-            # Agar student already kisi class ka member hai
-            if student.current_standard:
-                raise ValidationError(f"Aap pehle se hi {student.current_standard.name} ke student ho!")
-
-        # 🟢 NEW SECURITY CHECKS END ────────────────────────────────────
-
-        # Purana logic (Session object fetch karna)
         session = self.context.get("session_obj")
 
-        # Duplicate Request Check
+        if hasattr(user, 'school_admin_profile') and user.school_admin_profile is not None:
+             # Ek aur extra safety: Agar OneToOne relationship hai toh aise check karo
+             try:
+                 if user.school_admin_profile:
+                     raise ValidationError("Bhai, aap Admin ho! Aapko request bhejne ki zaroorat nahi.")
+             except:
+                 pass # Profile nahi hai toh aage badho
+
+        # 🎯 Case A: TEACHER Recruitment Session
+        if session.purpose == 'TEACHER':
+            # ❌ NEW CHECK: Student teacher banne ke liye apply nahi kar sakta
+            if hasattr(user, 'student_profile'):
+                raise ValidationError("Bhai, aap abhi student ho! Pehle padhai poori karo phir teacher banna.")
+
+            # Check: Kya ye user pehle se usi school mein teacher hai?
+            if hasattr(user, 'teacher_profile'):
+                if user.teacher_profile.organization == session.organization:
+                    raise ValidationError("Bhai, aap pehle se is school mein Teacher ho!")
+
+        # 🎯 Case B: STUDENT Admission Session (Tera Purana Logic)
+        else:
+            # Check: Teacher student banne ki koshish toh nahi kar raha?
+            if hasattr(user, 'teacher_profile'):
+                raise ValidationError("Bhai, aap Teacher ho! Master hokar bench par mat baitho.")
+
+            # Check: Kya ye pehle se kisi class ka student hai?
+            if hasattr(user, 'student_profile') and user.student_profile.current_standard:
+                raise ValidationError(f"Aap pehle se hi {user.student_profile.current_standard.name} ke student ho!")
+
+        # 🛑 2. Duplicate Request Check
         if JoinRequest.objects.filter(session=session, user=user).exists():
             raise ValidationError("Aapne is session ke liye pehle hi request bhej di hai.")
 
@@ -226,7 +264,92 @@ class AssignClassTeacherSerializer(serializers.ModelSerializer):
 
     def validate_class_teacher(self, value):
         user = self.context['request'].user
-        # Check: Kya ye teacher usi school ka hai jiska admin request bhej raha hai?
-        if value.organization != user.school_admin_profile.organization:
-            raise serializers.ValidationError("Bhai, ye teacher aapke school ka nahi hai!")
+        
+        # 🎯 HEART & KIDNEY SAFE LOGIC:
+        # Purani line (jo crash kar rahi thi): 
+        # if value.organization != user.school_admin_profile.organization:
+        
+        # ✅ Nayi safe line (RelatedManager check):
+        is_authorized = user.school_admin_profile.filter(organization=value.organization).exists()
+        
+        if not is_authorized:
+            raise serializers.ValidationError("Bhai, ye teacher aapke managed school ka nahi hai!")
+            
         return value
+    
+
+
+    # class SessionCreateSerializer(serializers.ModelSerializer):
+    # # 🎯 FE 'school_id' (UUID) bhejega, backend use 'organization' model se map karega
+    # school_id = serializers.PrimaryKeyRelatedField(
+    #     source='organization',
+    #     queryset=Standard._meta.get_field('organization').remote_field.model.objects.all(),
+    #     required=True
+    # )
+    
+    # # 'student_limit' ko API mein 'limit' dikhayenge
+    # limit = serializers.IntegerField(source='student_limit')
+    
+    # # Response mein UUID dikhane ke liye
+    # organization_id = serializers.ReadOnlyField(source='organization.id')
+    
+    # # Session code automatic banta hai, isliye ReadOnly
+    # session_code = serializers.ReadOnlyField()
+
+    # class Meta:
+    #     model = ClassroomSession
+    #     # 🎯 Fields mein 'school_id' add kar diya hai
+    #     fields = ("id", "session_code", "school_id", "organization_id", "title", "purpose", 
+    #               "target_standard", "limit", "expires_at")
+
+    # def validate_expires_at(self, value):
+    #     if value <= timezone.now():
+    #         raise ValidationError("Expiry must be in the future.")
+    #     return value
+
+    # def validate(self, attrs):
+    #     user = self.context['request'].user
+    #     purpose = attrs.get('purpose')
+    #     target_standard = attrs.get('target_standard')
+
+    #     # 🎯 HEART (Old Logic): Teacher security check waisa hi hai
+    #     if hasattr(user, 'teacher_profile'):
+    #         teacher = user.teacher_profile
+            
+    #         if purpose == 'STUDENT':
+    #             if not target_standard:
+    #                 raise ValidationError({"target_standard": "Bhai, class batana zaroori hai."})
+                
+    #             # Check: Kya ye wahi class hai jiska ye teacher 'class_teacher' hai?
+    #             if target_standard.class_teacher != teacher:
+    #                 raise PermissionDenied(
+    #                     f"Bhai, aap sirf '{target_standard.name}' ke liye session nahi bana sakte "
+    #                     "kyunki aap iske assigned class teacher nahi ho!"
+    #                 )
+    #     return attrs
+
+    # def create(self, validated_data):
+    #     request = self.context.get("request")
+    #     user = request.user
+        
+    #     # DRF 'source' ki wajah se 'school_id' ko 'organization' key mein convert kar deta hai
+    #     selected_org = validated_data.get('organization')
+        
+    #     if hasattr(user, "teacher_profile"):
+    #         # Teacher logic remains same
+    #         validated_data["teacher"] = user.teacher_profile
+    #         validated_data["organization"] = user.teacher_profile.organization
+        
+    #     elif hasattr(user, "school_admin_profile"):
+    #         # 🎯 KIDNEY (New Logic): Multi-school admin check
+    #         # Check karo: Kya ye admin sach mein is selected school ka admin hai?
+    #         is_linked = user.school_admin_profile.filter(organization=selected_org).exists()
+    #         if not is_linked:
+    #             raise PermissionDenied("Bhai, aap is school ke admin nahi ho!")
+            
+    #         validated_data["organization"] = selected_org
+    #         validated_data["teacher"] = None 
+    #     else:
+    #         raise PermissionDenied("Only Teachers or Admins can create sessions.")
+        
+    #     return super().create(validated_data)

@@ -1,4 +1,4 @@
-# models.py
+# normaluser ki models.py
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.db import models
 from django.utils import timezone
@@ -52,15 +52,23 @@ class NormalUser(AbstractUser):
         GUEST = 'GUEST', 'Independent User'
 
     # Profile Fields
-    mobile = models.CharField(max_length=15, unique=True, db_index=True)
+    mobile = models.CharField(max_length=15, unique=False, db_index=True)
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, blank=True, null=True)
     bloodgroup = models.CharField(max_length=3, choices=BLOOD_GROUP_CHOICES, blank=True, null=True)
     dob = models.DateField("Date of Birth", blank=True, null=True)
     address = models.TextField(blank=True, null=True)
 
-    email = models.EmailField(unique=True, db_index=True)
+    email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Roles.choices, default=Roles.GUEST)
     
+    admin_custom_id = models.CharField(
+        max_length=50, 
+        unique=True, 
+        null=True, 
+        blank=True, 
+        editable=False
+    )
+
     @property
     def is_school_admin(self):
         return self.role == self.Roles.SCHOOL_ADMIN
@@ -96,12 +104,10 @@ class NormalUser(AbstractUser):
         verbose_name_plural = 'Users'
         ordering = ['-date_joined']
         indexes = [
-            models.Index(fields=['email']),
-            models.Index(fields=['mobile']),
+            # Email aur Mobile par unique/db_index pehle se hai, 
+            # yahan dobara likhne ki zaroorat nahi hai.
             models.Index(fields=['role']),
-            models.Index(fields=['is_deleted']),
-            models.Index(fields=['is_active']),
-            models.Index(fields=['deleted_at']),
+            models.Index(fields=['is_deleted', 'is_active']), # Composite index (Faster)
         ]
 
     def __str__(self):
@@ -122,10 +128,12 @@ class NormalUser(AbstractUser):
             self.username = f"deleted_user_{self.id}_{timestamp}"
         if self.mobile:  # ← YE ADD KIYA – critical fix!
             self.mobile = f"deleted_mobile_{self.id}_{timestamp}"
+        if self.admin_custom_id:
+            self.admin_custom_id = f"DEL-{self.admin_custom_id}-{timestamp}"
 
         self.save(update_fields=[
             'is_active', 'is_deleted', 'deleted_at',
-            'deleted_by', 'email', 'username', 'mobile'
+            'deleted_by', 'email', 'username', 'mobile', 'admin_custom_id'
         ])
 
     def restore(self, original_email=None, original_username=None, original_mobile=None):
@@ -179,5 +187,11 @@ class Notification(models.Model):
         return f"{self.recipient.username} - {self.title}"
     
 
-
-    
+    # signup hone par notification ke liye ye functioin hai
+def create_notification(user, title, message, n_type='info'):
+    return Notification.objects.create(
+        recipient=user,
+        title=title,
+        message=message,
+        notification_type=n_type
+    )

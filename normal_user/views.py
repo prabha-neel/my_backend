@@ -11,68 +11,87 @@ from django_ratelimit.decorators import ratelimit
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.throttling import UserRateThrottle
 import logging
-from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer, NotificationSerializer
+from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer, NotificationSerializer, NormalUserSignupSerializer
 from .models import NormalUser, Notification
 from .utils import create_notification
+from organizations.serializers import OrganizationDetailSerializer, SchoolAdminUserSerializer
+from organizations.models import Organization, SchoolAdmin
+from .models import NormalUser, Notification, create_notification
+from django.contrib.auth import authenticate 
 
 logger = logging.getLogger(__name__)
 
 
 @extend_schema(
-    description="Register a new user account",
-    responses={
-        201: OpenApiResponse(description="Account created successfully"),
-        400: OpenApiResponse(description="Validation error"),
-        409: OpenApiResponse(description="User already exists"),
-    }
+    description="Register a new School Admin and Organization together",
+    responses={201: OpenApiResponse(description="School and Admin created successfully")}
 )
-@method_decorator(ratelimit(key='ip', rate='2/m', method='POST', block=True), name='post')
+@method_decorator(ratelimit(key='ip', rate='2/m', method='POST', block=True), name='dispatch')
 class SignupView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = SignupSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({
-                "success": False,
-                "message": "Validation failed",
-                "errors": serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-
+        data = request.data
+        org_name = data.get('name') 
+        
         try:
             with transaction.atomic():
-                user = serializer.save()
-            create_notification(
+                # 1. User check (Multiple schools handling)
+                user = NormalUser.objects.filter(mobile=data.get('admin_mobile')).first()
+                
+                if not user:
+                    user_serializer = SignupSerializer(data={
+                        "username": data.get('admin_mobile'),
+                        "mobile": data.get('admin_mobile'),
+                        "password": data.get('admin_password'),
+                        "role": "SCHOOL_ADMIN",
+                    })
+                    if not user_serializer.is_valid():
+                        return Response({"success": False, "errors": user_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+                    user = user_serializer.save()
+                else:
+                    user.role = "SCHOOL_ADMIN"
+                    user.save()
+
+                # 2. Org creation
+                if org_name:
+                    new_org = Organization.objects.create(
+                        name=org_name,
+                        admin=user,
+                        org_type=data.get('org_type', 'school'),
+                        address=data.get('address', ''),
+                        affiliation_board=data.get('affiliation_board', ''),
+                        is_active=data.get('is_active', True),
+                        is_verified=data.get('is_verified', True)
+                    )
+                    
+                    SchoolAdmin.objects.create(
+                        user=user,
+                        organization=new_org,
+                        designation="Owner/Founder"
+                    )
+
+                # 3. Notification (Bande ko welcome bolo)
+                create_notification(
                     user, 
-                    "Welcome aboard! 🚀", 
-                    f"Hi {user.first_name or user.username}, your account has been created successfully.", 
+                    "Welcome Principal! 🏫", 
+                    f"Organization {org_name} has been registered successfully.", 
                     "success"
                 )
-        except IntegrityError:
-            return Response({
-                "success": False,
-                "message": "A user with this username, email, or mobile number already exists."
-            }, status=status.HTTP_409_CONFLICT)
 
-        refresh = RefreshToken.for_user(user)
+                refresh = RefreshToken.for_user(user)
+                return Response({
+                    "success": True,
+                    "message": f"Organization '{org_name}' linked successfully!",
+                    "data": {
+                        "tokens": {"refresh": str(refresh), "access": str(refresh.access_token)},
+                        "user": SchoolAdminUserSerializer(user).data
+                    }
+                }, status=status.HTTP_201_CREATED)
 
-        return Response({
-            "success": True,
-            "message": "Account created successfully!",
-            "data": {
-                "tokens": {
-                    "refresh": str(refresh),
-                    "access": str(refresh.access_token)
-                },
-                "user": {
-                    "id": user.id,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "email": user.email,
-                    "mobile": user.mobile
-                }
-            }
-        }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f"Signup Error: {str(e)}")
+            return Response({"success": False, "message": "Signup failed", "error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(
@@ -82,25 +101,81 @@ class SignupView(APIView):
         400: OpenApiResponse(description="Invalid credentials"),
     }
 )
-@method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True), name='post')
+
+@method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True), name='dispatch')
 class LoginView(APIView):
     permission_classes = [AllowAny]
-
+    
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        user_input = request.data.get('user_name')
+        password = request.data.get('password')
+
+        # 1. Multi-Account Check (Jaisa tumhara tha, waisa hi rakha hai)
+        user = authenticate(request, username=user_input, password=password)
+
+        if not user and hasattr(request, 'multiple_accounts'):
+            accounts = [{
+                "id": u.id, 
+                "name": u.first_name, 
+                "username": u.username,
+                "role": u.role,
+                # Safe access to organization name for student/admin
+                "school_name": u.school_admin_profile.first().organization.name if u.school_admin_profile.exists() else "General"
+            } for u in request.multiple_accounts]
+            
+            return Response({
+                "success": True,
+                "action": "SELECT_ACCOUNT",
+                "message": "Multiple accounts found.",
+                "data": { "accounts": accounts }
+            }, status=status.HTTP_200_OK)
+
+        # 2. Login Validation
+        serializer = LoginSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
-            login_attempt = request.data.get('user_name', 'unknown')
-            ip = request.META.get('REMOTE_ADDR')
-            logger.warning(f"Failed login attempt for '{login_attempt}' from IP: {ip}")
             return Response({
                 "success": False,
-                "message": "Invalid credentials. Please check your username/email/mobile or password.",
+                "message": "Invalid credentials.",
                 "errors": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
 
         user = serializer.validated_data['user']
         refresh = RefreshToken.for_user(user)
 
+        # 3. User Data (Admin/Student logic)
+        if user.role in ['SCHOOL_ADMIN', 'SUPER_ADMIN']:
+            user_data = SchoolAdminUserSerializer(user).data
+        else:
+            user_data = SignupSerializer(user).data
+
+        # 4. 🔥 SCHOOLS LIST FIX (No more null/empty)
+        schools_list = []
+        org_data = None
+
+        # RelatedManager (.all()) se list nikalna
+        profiles = user.school_admin_profile.all() 
+        
+        for p in profiles:
+            schools_list.append({
+                "school_id": p.organization.id,
+                "school_name": p.organization.name,
+                "org_id": p.organization.org_id,
+                "designation": p.designation,
+                "is_active": p.is_active
+            })
+
+        # 5. Default Organization Detail (Pehle school ki full details)
+        if schools_list:
+            try:
+                # Sirf tabhi details fetch karo jab schools hon
+                from organizations.models import Organization
+                first_org = Organization.objects.get(id=schools_list[0]['school_id'])
+                org_data = OrganizationDetailSerializer(first_org).data
+            except Exception as e:
+                logger.error(f"Organization Detail Fetch Error: {str(e)}")
+                org_data = None
+
+        # 6. Final Response (Same structure as before)
         return Response({
             "success": True,
             "message": "Login successful!",
@@ -109,17 +184,50 @@ class LoginView(APIView):
                     "refresh": str(refresh),
                     "access": str(refresh.access_token)
                 },
-                "user": {
-                    "id": user.id,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "email": user.email,
-                    "mobile": user.mobile
-                }
+                "user": user_data,
+                "organization": org_data,
+                "schools": schools_list
             }
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    description="Discover accounts linked to a mobile number",
+    responses={200: OpenApiResponse(description="List of accounts found")}
+)
+class AccountDiscoveryView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        mobile = request.data.get('mobile')
+        if not mobile:
+            return Response({
+                "success": False, 
+                "message": "Mobile number is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Hamare SoftDeleteManager (.active_objects) ka use karke bache dhoondo
+        users = NormalUser.active_objects.filter(mobile=mobile)
+
+        if not users.exists():
+            return Response({
+                "success": False, 
+                "message": "No account found with this mobile number"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Frontend ke liye data taiyar karo
+        user_list = [{
+            "username": user.username, # Ye frontend piche chupa lega
+            "display_name": f"{user.first_name} {user.last_name}".strip() or user.username,
+            "role": user.role,
+            "email": user.email
+        } for user in users]
+
+        return Response({
+            "success": True,
+            "data": user_list
+        }, status=status.HTTP_200_OK)
+    
 @extend_schema(
     description="Logout user by blacklisting refresh token",
     responses={
@@ -127,7 +235,7 @@ class LoginView(APIView):
         400: OpenApiResponse(description="Invalid or missing token"),
     }
 )
-@method_decorator(ratelimit(key='user', rate='5/m', method='POST', block=True), name='post')
+@method_decorator(ratelimit(key='user', rate='5/m', method='POST', block=True), name='dispatch')
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -223,136 +331,80 @@ class MarkNotificationReadView(generics.UpdateAPIView):
             return Response({"success": True, "message": "Marked as read"})
         except Notification.DoesNotExist:
             return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+
+@extend_schema(
+    description="Register a new independent user (GUEST)",
+    request=NormalUserSignupSerializer,
+    responses={
+        201: OpenApiResponse(description="User created successfully"),
+        400: OpenApiResponse(description="Validation error"),
+        429: OpenApiResponse(description="Too many requests"),
+    }
+)
+# IP-based Rate Limiting: Ek minute mein sirf 2 signup attempts allowed hain ek IP se
+@method_decorator(ratelimit(key='ip', rate='2/m', method='POST', block=True), name='dispatch')
+class NormalUserSignupView(APIView):
+    permission_classes = [AllowAny]
+    # DRF ki apni throttling bhi backup ke liye
+    throttle_classes = [UserRateThrottle] 
+
+    @transaction.atomic
+    def post(self, request):
+        ip = request.META.get('REMOTE_ADDR')
+        logger.info(f"Signup attempt started from IP: {ip}")
+
+        serializer = NormalUserSignupSerializer(data=request.data)
         
-# # views.py
-# from rest_framework.views import APIView
-# from rest_framework.response import Response
-# from rest_framework.permissions import AllowAny, IsAuthenticated
-# from rest_framework_simplejwt.tokens import RefreshToken
-# from rest_framework_simplejwt.exceptions import TokenError
-# from rest_framework import status
-# from django.db import transaction, IntegrityError
-# from django.utils.decorators import method_decorator
-# from django_ratelimit.decorators import ratelimit
-# from drf_spectacular.utils import extend_schema
-# import logging
-# from rest_framework.throttling import UserRateThrottle
-# from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer
-# from .models import NormalUser
+        if serializer.is_valid():
+            try:
+                user = serializer.save()
+                
+                # 1. Welcome Notification
+                try:
+                    create_notification(
+                        user, 
+                        "Welcome! 🎉", 
+                        f"Hello {user.first_name}, your account is ready.", 
+                        "success"
+                    )
+                except Exception as e:
+                    logger.error(f"Notification failed for {user.email}: {str(e)}")
 
-# logger = logging.getLogger(__name__)
+                # 2. JWT Generation
+                refresh = RefreshToken.for_user(user)
+                
+                logger.info(f"User created successfully: {user.email} from IP: {ip}")
 
+                return Response({
+                    "success": True,
+                    "message": "Signup successful!",
+                    "data": {
+                        "tokens": {
+                            "refresh": str(refresh),
+                            "access": str(refresh.access_token),
+                        },
+                        "user": {
+                            "id": user.id,
+                            "name": user.first_name,
+                            "email": user.email,
+                            "role": user.role
+                        }
+                    }
+                }, status=status.HTTP_201_CREATED)
 
-# class SignupView(APIView):
-#     permission_classes = [AllowAny]
+            except Exception as e:
+                logger.critical(f"System error during signup for IP {ip}: {str(e)}")
+                return Response({
+                    "success": False,
+                    "message": "Internal server error. Please try later.",
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-#     def post(self, request):
-#         serializer = SignupSerializer(data=request.data)
-#         if not serializer.is_valid():
-#             return Response({
-#                 "success": False,
-#                 "message": "Validation failed",
-#                 "errors": serializer.errors
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         try:
-#             with transaction.atomic():
-#                 user = serializer.save()
-#         except IntegrityError:
-#             return Response({
-#                 "success": False,
-#                 "message": "User with this username, email or mobile already exists."
-#             }, status=status.HTTP_409_CONFLICT)
-
-#         refresh = RefreshToken.for_user(user)
-#         return Response({
-#             "success": True,
-#             "message": "Account created successfully!",
-#             "tokens": {
-#                 "refresh": str(refresh),
-#                 "access": str(refresh.access_token)
-#             },
-#             "user": {
-#                 "id": user.id,
-#                 "username": user.username,
-#                 "first_name": user.first_name,
-#                 "email": user.email,
-#                 "mobile": user.mobile
-#             }
-#         }, status=status.HTTP_201_CREATED)
-
-
-# @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True), name='post')
-# class LoginView(APIView):
-#     permission_classes = [AllowAny]
-
-#     def post(self, request):
-#         serializer = LoginSerializer(data=request.data)
-#         if not serializer.is_valid():
-#             return Response({
-#                 "success": False,
-#                 "message": "Invalid credentials",
-#                 "errors": serializer.errors
-#             }, status=status.HTTP_400_BAD_REQUEST)
-
-#         user = serializer.validated_data['user']
-#         refresh = RefreshToken.for_user(user)
-
-#         return Response({
-#             "success": True,
-#             "message": "Login successful!",
-#             "tokens": {
-#                 "refresh": str(refresh),
-#                 "access": str(refresh.access_token)
-#             },
-#             "user": {
-#                 "id": user.id,
-#                 "username": user.username,
-#                 "first_name": user.first_name,
-#                 "email": user.email,
-#                 "mobile": user.mobile
-#             }
-#         }, status=status.HTTP_200_OK)
-
-
-# @method_decorator(ratelimit(key='user', rate='5/m', method='POST', block=True), name='post')
-# class LogoutView(APIView):
-#     permission_classes = [IsAuthenticated]
-
-#     def post(self, request):
-#         refresh_token = request.data.get("refresh")
-#         if not refresh_token:
-#             return Response({"success": False, "detail": "Refresh token is required."}, status=400)
-#         try:
-#             token = RefreshToken(refresh_token)
-#             token.blacklist()
-#             return Response({"success": True, "detail": "Logout successful."}, status=200)
-#         except TokenError:
-#             return Response({"success": False, "detail": "Invalid or already blacklisted token."}, status=400)
-
-
-# class AccountDeleteThrottle(UserRateThrottle):
-#     rate = '3/day'
-
-
-# class UserSoftDeleteView(APIView):
-#     permission_classes = [IsAuthenticated]
-#     throttle_classes = [AccountDeleteThrottle]
-
-#     @transaction.atomic
-#     def post(self, request):
-#         user = request.user
-
-#         if getattr(user, 'is_deleted', False):
-#             return Response({"detail": "Account is already deleted."}, status=200)
-
-#         serializer = AccountDeleteSerializer(data=request.data)
-#         if not serializer.is_valid():
-#             return Response(serializer.errors, status=400)
-
-#         if not user.check_password(serializer.validated_data['password']):
-#             return Response({"detail": "Incorrect password."}, status=403)
-
-#         user.soft_delete(deleted_by=user)
-#         logger.info(f"Account soft deleted | User ID: {user.id}")
-#         return Response({"detail": "Account deleted successfully. We're sad to see you go!"}, status=200)
+        # 3. Security Logging for Validation Failures
+        logger.warning(f"Validation failed for signup attempt from IP {ip}: {serializer.errors}")
+        
+        return Response({
+            "success": False,
+            "message": "Invalid data provided.",
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
