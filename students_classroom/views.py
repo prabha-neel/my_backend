@@ -116,6 +116,15 @@ class StandardViewSet(viewsets.ModelViewSet):
             return Response({"message": f"Teacher assigned to {standard.name} successfully."})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def perform_create(self, serializer):
+        try:
+            serializer.save() # Yahan save hone ki koshish hogi
+        except Exception: 
+            # Agar database ne duplicate ki wajah se mana kiya, toh ye chalega:
+            raise ValidationError({
+                "name": "Bhai, ye class is school mein pehle se bani hui hai!"
+            })
         
 # ────────────────────────────────────────────────
 # 4. ClassroomSession ViewSet

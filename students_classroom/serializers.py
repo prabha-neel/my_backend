@@ -24,15 +24,6 @@ class StandardListSerializer(serializers.ModelSerializer):
         fields = ("id", "school_id", "name", "description", "organization", "class_teacher", "teacher_name")
         read_only_fields = ("id", "teacher_name")
 
-        # Validator waisa hi rahega
-        validators = [
-            UniqueTogetherValidator(
-                queryset=Standard.objects.all(),
-                fields=['organization', 'name'],
-                message="Bhai, ye class is school mein pehle se bani hui hai!"
-            )
-        ]
-
     # 🎯 3. Yahan aati hai asli Surgery (validate method)
     def validate(self, attrs):
         user = self.context['request'].user
