@@ -97,6 +97,11 @@ class Standard(models.Model):
         verbose_name=_("Standard / Grade"),
         help_text=_("e.g. Class 8, Grade 10, STD XII"),
     )
+    section = models.CharField(
+        max_length=10, 
+        blank=True, 
+        null=True
+    ) # A, B, C
     class_teacher = models.ForeignKey(
         "teachers.Teacher", # String use karo circular import se bachne ke liye
         on_delete=models.SET_NULL,
@@ -105,7 +110,7 @@ class Standard(models.Model):
         related_name="managed_standards",
         verbose_name=_("Class Teacher"),
     )
-    description = models.TextField(blank=True, verbose_name=_("Description"))
+    description = models.TextField(blank=True, null=True, verbose_name=_("Description"))
     is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -114,7 +119,7 @@ class Standard(models.Model):
         verbose_name = _("Standard")
         verbose_name_plural = _("Standards")
         ordering = ["name"]
-        unique_together = ('organization', 'name')
+        unique_together = ('organization', 'name', 'section')
         indexes = [models.Index(fields=["is_active", "name"])]
 
     def __str__(self) -> str:

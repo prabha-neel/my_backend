@@ -41,8 +41,9 @@ class SignupView(APIView):
                 
                 if not user:
                     user_serializer = SignupSerializer(data={
-                        "username": data.get('admin_mobile'),
                         "mobile": data.get('admin_mobile'),
+                        "first_name": data.get('admin_name'), # <-- Ye zaroori hai prefix ke liye
+                        "email": data.get('admin_email'),    # <-- Ye zaroori hai validation ke liye
                         "password": data.get('admin_password'),
                         "role": "SCHOOL_ADMIN",
                     })

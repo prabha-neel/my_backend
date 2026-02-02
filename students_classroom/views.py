@@ -117,15 +117,48 @@ class StandardViewSet(viewsets.ModelViewSet):
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    def perform_create(self, serializer):
-        try:
-            serializer.save() # Yahan save hone ki koshish hogi
-        except Exception: 
-            # Agar database ne duplicate ki wajah se mana kiya, toh ye chalega:
-            raise ValidationError({
-                "name": "Bhai, ye class is school mein pehle se bani hui hai!"
+    def create(self, request, *args, **kwargs):
+        # 1. Common School ID uthao
+        school_id = request.data.get('school_id')
+        classes_data = request.data.get('classes', [])
+
+        if not school_id:
+            return Response({"error": "Bhai, school_id bhejni zaroori hai!"}, status=400)
+
+        results = []
+
+        # 2. Loop chalao
+        for item in classes_data:
+            class_name = item.get('name')
+            sections_list = item.get('section', []) # ["A", "B", "C"]
+
+            # Agar koi section nahi bheja, toh kam se kam ek empty section ke saath class ban jaye
+            if not sections_list:
+                sections_list = [None]
+
+            created_sections = []
+            
+            # 3. Yahan 'Section' alag model nahi hai, isliye hum har section ke liye 
+            # Standard model mein hi entry karenge.
+            for sec_name in sections_list:
+                # 'Standard' model hi use hoga
+                obj, created = Standard.objects.get_or_create(
+                    organization_id=school_id, 
+                    name=class_name,
+                    section=sec_name # Yeh model ki field hai
+                )
+                created_sections.append(sec_name if sec_name else "No Section")
+
+            results.append({
+                "class": class_name,
+                "sections": created_sections
             })
-        
+
+        return Response({
+            "status": "Success",
+            "school_id": school_id,
+            "processed_data": results
+        }, status=201)
 # ────────────────────────────────────────────────
 # 4. ClassroomSession ViewSet
 # ────────────────────────────────────────────────
@@ -194,8 +227,6 @@ class ClassroomSessionViewSet(viewsets.ModelViewSet):
         session.close() 
         return Response({"message": _("Session closed successfully.")}, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["post"], url_path="accept-request")
-    @transaction.atomic
     @action(detail=True, methods=["post"], url_path="accept-request")
     @transaction.atomic
     def accept_request(self, request, pk=None):

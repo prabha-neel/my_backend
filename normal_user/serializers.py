@@ -47,23 +47,23 @@ class SignupSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        # 1. Email unique check (Zaroori hai)
         if NormalUser.objects.filter(email=data['email']).exists():
             raise serializers.ValidationError({"email": "This email is already registered."})
 
-        # 2. AUTO-USERNAME GENERATION 🚀
-        import uuid
-        first_name = data.get('first_name', 'user').lower().replace(" ", "")
+        # --- YE WALA LOGIC DALO (Bina underscore aur bina uuid ke) ---
+        first_name = data.get('first_name', 'USR').upper().replace(" ", "")
+        first_name = first_name[:3] if len(first_name) >= 3 else first_name.ljust(3, 'X')
+
         mobile = data.get('mobile', '0000')
         
-        # Unique username dhundne tak loop chalega (Extra Safety)
         while True:
-            unique_suffix = uuid.uuid4().hex[:4]
-            generated_username = f"{first_name}_{mobile[-4:]}_{unique_suffix}"
+            key_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+            # Format: NAME3 + MOBILE4 + KEY4
+            generated_username = f"{first_name}{mobile[-4:]}{key_part}"
+            
             if not NormalUser.objects.filter(username=generated_username).exists():
                 data['username'] = generated_username
                 break
-
         return data
 
     def create(self, validated_data):
@@ -175,17 +175,20 @@ class NormalUserSignupSerializer(serializers.ModelSerializer):
 
         # --- USERNAME GENERATION LOGIC ---
         # 1. Name ke pehle 3 letters (Upper case)
-        name_part = first_name[:3].upper() if first_name else "USR"
+        # 1. Name clean aur 3 chars fixed (e.g., "Ab" -> "ABX")
+        name_part = first_name.upper().replace(" ", "")
+        name_part = name_part[:3] if len(name_part) >= 3 else name_part.ljust(3, 'X')
         
         # 2. Mobile ke last 4 digits
         mobile_part = mobile[-4:] if len(mobile) >= 4 else "0000"
         
-        # 3. 4 alphanumeric characters ki key
-        key_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        
-        # Final Unique Username (e.g., VIJ1022A1B2)
-        generated_username = f"{name_part}{mobile_part}{key_part}"
-        # ---------------------------------
+        while True:
+            key_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+            generated_username = f"{name_part}{mobile_part}{key_part}"
+            
+            # Check karo ki ye username pehle se toh nahi hai
+            if not NormalUser.objects.filter(username=generated_username).exists():
+                break # Agar unique hai toh loop se bahar aa jao
 
         user = NormalUser.objects.create_user(
             username=generated_username, # <--- Ab username email nahi, tera formula hai

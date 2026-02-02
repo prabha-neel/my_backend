@@ -19,9 +19,11 @@ class StandardListSerializer(serializers.ModelSerializer):
     organization = serializers.HiddenField(default=None)
     teacher_name = serializers.ReadOnlyField(source='class_teacher.user.get_full_name')
 
+    section = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
     class Meta:
         model = Standard
-        fields = ("id", "school_id", "name", "description", "organization", "class_teacher", "teacher_name")
+        fields = ("id", "school_id", "name", "section", "description", "organization", "class_teacher", "teacher_name")
         read_only_fields = ("id", "teacher_name")
 
     # 🎯 3. Yahan aati hai asli Surgery (validate method)
@@ -47,6 +49,17 @@ class StandardListSerializer(serializers.ModelSerializer):
             attrs['organization'] = user.teacher_profile.organization
         else:
             raise PermissionDenied("Sirf Admin ya Teacher hi class create kar sakte hain!")
+        
+        # 🎯 AB YE CHECK LAGAO (Jo duplicate check karega)
+        org = attrs.get('organization')
+        name = attrs.get('name')
+        section = attrs.get('section')
+
+        # Agar organization mil gayi hai, toh check karo combination
+        if org and Standard.objects.filter(organization=org, name=name, section=section).exists():
+            raise ValidationError({
+                "name": f"Bhai, is school mein {name} (Section: {section or 'N/A'}) pehle se bani hui hai!"
+            })
 
         # school_id ko attrs se hata do taaki Model save karte waqt 'unexpected field' error na de
         attrs.pop('school_id', None)
@@ -267,80 +280,3 @@ class AssignClassTeacherSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Bhai, ye teacher aapke managed school ka nahi hai!")
             
         return value
-    
-
-
-    # class SessionCreateSerializer(serializers.ModelSerializer):
-    # # 🎯 FE 'school_id' (UUID) bhejega, backend use 'organization' model se map karega
-    # school_id = serializers.PrimaryKeyRelatedField(
-    #     source='organization',
-    #     queryset=Standard._meta.get_field('organization').remote_field.model.objects.all(),
-    #     required=True
-    # )
-    
-    # # 'student_limit' ko API mein 'limit' dikhayenge
-    # limit = serializers.IntegerField(source='student_limit')
-    
-    # # Response mein UUID dikhane ke liye
-    # organization_id = serializers.ReadOnlyField(source='organization.id')
-    
-    # # Session code automatic banta hai, isliye ReadOnly
-    # session_code = serializers.ReadOnlyField()
-
-    # class Meta:
-    #     model = ClassroomSession
-    #     # 🎯 Fields mein 'school_id' add kar diya hai
-    #     fields = ("id", "session_code", "school_id", "organization_id", "title", "purpose", 
-    #               "target_standard", "limit", "expires_at")
-
-    # def validate_expires_at(self, value):
-    #     if value <= timezone.now():
-    #         raise ValidationError("Expiry must be in the future.")
-    #     return value
-
-    # def validate(self, attrs):
-    #     user = self.context['request'].user
-    #     purpose = attrs.get('purpose')
-    #     target_standard = attrs.get('target_standard')
-
-    #     # 🎯 HEART (Old Logic): Teacher security check waisa hi hai
-    #     if hasattr(user, 'teacher_profile'):
-    #         teacher = user.teacher_profile
-            
-    #         if purpose == 'STUDENT':
-    #             if not target_standard:
-    #                 raise ValidationError({"target_standard": "Bhai, class batana zaroori hai."})
-                
-    #             # Check: Kya ye wahi class hai jiska ye teacher 'class_teacher' hai?
-    #             if target_standard.class_teacher != teacher:
-    #                 raise PermissionDenied(
-    #                     f"Bhai, aap sirf '{target_standard.name}' ke liye session nahi bana sakte "
-    #                     "kyunki aap iske assigned class teacher nahi ho!"
-    #                 )
-    #     return attrs
-
-    # def create(self, validated_data):
-    #     request = self.context.get("request")
-    #     user = request.user
-        
-    #     # DRF 'source' ki wajah se 'school_id' ko 'organization' key mein convert kar deta hai
-    #     selected_org = validated_data.get('organization')
-        
-    #     if hasattr(user, "teacher_profile"):
-    #         # Teacher logic remains same
-    #         validated_data["teacher"] = user.teacher_profile
-    #         validated_data["organization"] = user.teacher_profile.organization
-        
-    #     elif hasattr(user, "school_admin_profile"):
-    #         # 🎯 KIDNEY (New Logic): Multi-school admin check
-    #         # Check karo: Kya ye admin sach mein is selected school ka admin hai?
-    #         is_linked = user.school_admin_profile.filter(organization=selected_org).exists()
-    #         if not is_linked:
-    #             raise PermissionDenied("Bhai, aap is school ke admin nahi ho!")
-            
-    #         validated_data["organization"] = selected_org
-    #         validated_data["teacher"] = None 
-    #     else:
-    #         raise PermissionDenied("Only Teachers or Admins can create sessions.")
-        
-    #     return super().create(validated_data)
