@@ -12,62 +12,62 @@ from students.models import StudentProfile
 # ────────────────────────────────────────────────
 
 class StandardListSerializer(serializers.ModelSerializer):
-    # 🎯 1. school_id ko input mein lenge (POST request ke liye)
     school_id = serializers.UUIDField(write_only=True, required=False)
-    
-    # 🎯 2. Organization field (Hidden) - backend handle karega
     organization = serializers.HiddenField(default=None)
-    teacher_name = serializers.ReadOnlyField(source='class_teacher.user.get_full_name')
+    
+    # 🎯 Change 1: class_teacher ko class_teacher_id kiya (source wahi rakha jo model mein hai)
+    class_teacher_id = serializers.ReadOnlyField(source='class_teacher.id')
+    
+    # 🎯 Change 2: teacher_name ko class_teacher_name kiya (SerializerMethodField for consistency)
+    class_teacher_name = serializers.SerializerMethodField()
 
     section = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = Standard
-        fields = ("id", "school_id", "name", "section", "description", "organization", "class_teacher", "teacher_name")
-        read_only_fields = ("id", "teacher_name")
+        # 🎯 Yahan bhi names update kar diye hain
+        fields = ("id", "school_id", "name", "section", "description", "organization", "class_teacher_id", "class_teacher_name")
+        read_only_fields = ("id", "class_teacher_name", "class_teacher_id")
 
-    # 🎯 3. Yahan aati hai asli Surgery (validate method)
+    # 🎯 Teacher ka naam nikaalne ka logic (Wahi purana heart, bas naya naam)
+    def get_class_teacher_name(self, obj):
+        if obj.class_teacher and hasattr(obj.class_teacher, 'user'):
+            return obj.class_teacher.user.get_full_name()
+        return None
+
     def validate(self, attrs):
         user = self.context['request'].user
-        # JSON body se school_id uthao
         school_id = attrs.get('school_id') or self.initial_data.get('school_id')
 
-        # Admin Logic
         if hasattr(user, 'school_admin_profile') and user.school_admin_profile.exists():
             if not school_id:
                 raise ValidationError({"school_id": "Admin bhai, school_id dena zaroori hai!"})
             
-            # RelatedManager error se bachne ke liye filter use kiya
             admin_prof = user.school_admin_profile.filter(organization_id=school_id).first()
             if not admin_prof:
                 raise ValidationError({"school_id": "Aap is school ke admin nahi ho!"})
             
             attrs['organization'] = admin_prof.organization
             
-        # Teacher Logic (Safe fallback)
         elif hasattr(user, 'teacher_profile'):
             attrs['organization'] = user.teacher_profile.organization
         else:
             raise PermissionDenied("Sirf Admin ya Teacher hi class create kar sakte hain!")
         
-        # 🎯 AB YE CHECK LAGAO (Jo duplicate check karega)
         org = attrs.get('organization')
         name = attrs.get('name')
         section = attrs.get('section')
 
-        # Agar organization mil gayi hai, toh check karo combination
         if org and Standard.objects.filter(organization=org, name=name, section=section).exists():
             raise ValidationError({
                 "name": f"Bhai, is school mein {name} (Section: {section or 'N/A'}) pehle se bani hui hai!"
             })
 
-        # school_id ko attrs se hata do taaki Model save karte waqt 'unexpected field' error na de
         attrs.pop('school_id', None)
         return attrs
 
     def create(self, validated_data):
         return super().create(validated_data)
-
 
 class StandardDetailSerializer(serializers.ModelSerializer):
     active_session_count = serializers.SerializerMethodField()
@@ -280,3 +280,61 @@ class AssignClassTeacherSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Bhai, ye teacher aapke managed school ka nahi hai!")
             
         return value
+    
+
+# class StandardListSerializer(serializers.ModelSerializer):
+#     # 🎯 1. school_id ko input mein lenge (POST request ke liye)
+#     school_id = serializers.UUIDField(write_only=True, required=False)
+    
+#     # 🎯 2. Organization field (Hidden) - backend handle karega
+#     organization = serializers.HiddenField(default=None)
+#     teacher_name = serializers.ReadOnlyField(source='class_teacher.user.get_full_name')
+
+#     section = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+#     class Meta:
+#         model = Standard
+#         fields = ("id", "school_id", "name", "section", "description", "organization", "class_teacher", "teacher_name")
+#         read_only_fields = ("id", "teacher_name")
+
+#     # 🎯 3. Yahan aati hai asli Surgery (validate method)
+#     def validate(self, attrs):
+#         user = self.context['request'].user
+#         # JSON body se school_id uthao
+#         school_id = attrs.get('school_id') or self.initial_data.get('school_id')
+
+#         # Admin Logic
+#         if hasattr(user, 'school_admin_profile') and user.school_admin_profile.exists():
+#             if not school_id:
+#                 raise ValidationError({"school_id": "Admin bhai, school_id dena zaroori hai!"})
+            
+#             # RelatedManager error se bachne ke liye filter use kiya
+#             admin_prof = user.school_admin_profile.filter(organization_id=school_id).first()
+#             if not admin_prof:
+#                 raise ValidationError({"school_id": "Aap is school ke admin nahi ho!"})
+            
+#             attrs['organization'] = admin_prof.organization
+            
+#         # Teacher Logic (Safe fallback)
+#         elif hasattr(user, 'teacher_profile'):
+#             attrs['organization'] = user.teacher_profile.organization
+#         else:
+#             raise PermissionDenied("Sirf Admin ya Teacher hi class create kar sakte hain!")
+        
+#         # 🎯 AB YE CHECK LAGAO (Jo duplicate check karega)
+#         org = attrs.get('organization')
+#         name = attrs.get('name')
+#         section = attrs.get('section')
+
+#         # Agar organization mil gayi hai, toh check karo combination
+#         if org and Standard.objects.filter(organization=org, name=name, section=section).exists():
+#             raise ValidationError({
+#                 "name": f"Bhai, is school mein {name} (Section: {section or 'N/A'}) pehle se bani hui hai!"
+#             })
+
+#         # school_id ko attrs se hata do taaki Model save karte waqt 'unexpected field' error na de
+#         attrs.pop('school_id', None)
+#         return attrs
+
+#     def create(self, validated_data):
+#         return super().create(validated_data)

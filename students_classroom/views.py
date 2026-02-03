@@ -45,7 +45,7 @@ class JoinSessionThrottle(UserRateThrottle):
     scope = 'join_session'
 
 class StandardPagination(PageNumberPagination):
-    page_size = 20
+    page_size = 80
     page_size_query_param = "page_size"
     max_page_size = 100
 
@@ -159,6 +159,40 @@ class StandardViewSet(viewsets.ModelViewSet):
             "school_id": school_id,
             "processed_data": results
         }, status=201)
+    
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        
+        # 🛡️ Step 1: Students Check (Pehle bacho ko bachao)
+        if instance.enrolled_students.exists():
+            student_count = instance.enrolled_students.count()
+            return Response(
+                {"error": f"Bhai, isme {student_count} bache hain. Pehle unhe shift karo!"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 🛡️ Step 2: Sessions Cleanup (Sabse safe tarika)
+        # Hum seedha ClassroomSession model se query karenge taaki related_name ka lafda na ho
+        from .models import ClassroomSession # Apne model ka sahi path dekh lena
+        
+        session_qs = ClassroomSession.objects.filter(target_standard=instance)
+        session_count = session_qs.count()
+        
+        if session_count > 0:
+            session_qs.delete()
+            print(f"Cleanup: {session_count} sessions deleted for class {instance.name}")
+
+        # 🛡️ Step 3: Final Class Deletion
+        self.perform_destroy(instance)
+        
+        return Response(
+            {
+                "message": f"Class {instance.name}-{instance.section} aur uske {session_count} sessions makkhan ki tarah saaf!"
+            }, 
+            status=status.HTTP_200_OK 
+        )
+    
 # ────────────────────────────────────────────────
 # 4. ClassroomSession ViewSet
 # ────────────────────────────────────────────────

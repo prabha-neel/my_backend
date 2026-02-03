@@ -23,7 +23,7 @@ class StudentProfile(models.Model):
     )
     student_unique_id = models.CharField(
         max_length=20, 
-        unique=True, 
+        unique=False, 
         db_index=True,
         help_text="Roll number or admission number"
     )
@@ -46,6 +46,7 @@ class StudentProfile(models.Model):
     class Meta:
         verbose_name = "Student Profile"
         ordering = ['-created_at']
+        unique_together = ('organization', 'student_unique_id')
 
     def __str__(self):
         return f"{self.user.get_full_name()} ({self.student_unique_id})"
@@ -117,6 +118,12 @@ class StudentFee(models.Model):
     due_date = models.DateField(db_index=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
     transaction_id = models.CharField(max_length=100, blank=True, null=True)
-
+    paid_at = models.DateTimeField(
+        blank=True, 
+        null=True, 
+        db_index=True,
+        help_text="Jis din asliyat mein payment received hui"
+    )
+    
     def __str__(self):
         return f"{self.student.student_unique_id} - {self.amount} ({self.status})"
