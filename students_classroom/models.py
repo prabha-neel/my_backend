@@ -53,33 +53,6 @@ class SessionPurpose:
     )
 
 # =============================================================================
-# Managers & QuerySets
-# =============================================================================
-
-class ActiveQuerySet(QuerySet):
-    def active(self):
-        return self.filter(is_deleted=False)
-
-    def currently_valid_sessions(self):
-        """Sessions that are currently joinable"""
-        now = timezone.now()
-        return self.active().filter(
-            status=SessionStatus.ACTIVE,
-            expires_at__gt=now,
-        )
-
-
-class ClassroomSessionManager(Manager.from_queryset(ActiveQuerySet)):
-    """Default manager = only non-deleted records"""
-    pass
-
-
-class ClassroomSessionAllManager(Manager):
-    """Allows access to soft-deleted records when needed"""
-    pass
-
-
-# =============================================================================
 # Models
 # =============================================================================
 
@@ -190,15 +163,10 @@ class ClassroomSession(models.Model):
         db_index=True,
         verbose_name=_("Status"),
     )
-    is_deleted = models.BooleanField(default=False, db_index=True)
 
     # ── Audit fields ──────────────────────────────────────────────────────────
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    # ── Managers ──────────────────────────────────────────────────────────────
-    objects = ClassroomSessionManager()
-    all_objects = ClassroomSessionAllManager()
 
     class Meta:
         verbose_name = _("Classroom Session")
@@ -249,8 +217,7 @@ class ClassroomSession(models.Model):
     @property
     def is_joinable(self) -> bool:
         return (
-            not self.is_deleted
-            and self.status == SessionStatus.ACTIVE
+            self.status == SessionStatus.ACTIVE
             and timezone.now() < self.expires_at
             and self.current_student_count < self.student_limit
         )
@@ -258,9 +225,7 @@ class ClassroomSession(models.Model):
     def _sync_status(self, save: bool = True) -> None:
         now = timezone.now()
 
-        if self.is_deleted:
-            new_status = SessionStatus.CLOSED
-        elif now >= self.expires_at:
+        if now >= self.expires_at:
             new_status = SessionStatus.EXPIRED
         elif self.current_student_count >= self.student_limit:
             new_status = SessionStatus.FULL
@@ -288,7 +253,7 @@ class ClassroomSession(models.Model):
             return False, "Request is no longer pending"
 
         # Lock session to prevent race conditions
-        session = ClassroomSession.all_objects.select_for_update().get(pk=self.pk)
+        session = ClassroomSession.objects.select_for_update().get(pk=self.pk)
         session._sync_status(save=False)
 
         if not session.is_joinable:

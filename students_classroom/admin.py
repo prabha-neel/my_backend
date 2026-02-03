@@ -66,7 +66,6 @@ class ClassroomSessionAdmin(admin.ModelAdmin):
     list_filter = (
         'status',
         'target_standard',
-        'is_deleted',
         ('created_at', admin.DateFieldListFilter),
     )
     search_fields = ('session_code', 'teacher__user__username', 'target_standard__name')
