@@ -17,6 +17,7 @@ mobile_regex = RegexValidator(
 
 
 class SignupSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, min_length=8, style={'input_type': 'password'})
     mobile = serializers.CharField(validators=[mobile_regex], max_length=10)
     dob = serializers.DateField(required=False, allow_null=True, input_formats=['%Y-%m-%d', '%d-%m-%Y'])
@@ -135,6 +136,7 @@ class SchoolAdminUserSerializer(serializers.ModelSerializer):
         ]
 
 class NormalUserSignupSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(required=True)
     name = serializers.CharField(source='first_name', required=True)
     password = serializers.CharField(write_only=True, min_length=8)
     

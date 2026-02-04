@@ -52,6 +52,7 @@ INSTALLED_APPS = [
 # MIDDLEWARE - CORS sabse upar hona chahiye
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # <-- ADD: Top pe
+    'normal_user.middleware.RatelimitJSONMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
