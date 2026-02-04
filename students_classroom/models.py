@@ -126,6 +126,14 @@ class ClassroomSession(models.Model):
         related_name="sessions",
         verbose_name=_("Target Standard"),
     )
+    
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="created_sessions",
+        verbose_name=_("Created By")
+    )
 
     # ── Core identifiers & rules ──────────────────────────────────────────────
     session_code = models.CharField(

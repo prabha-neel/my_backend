@@ -21,18 +21,21 @@ from .models import (
 # =================================================
 @admin.register(Standard)
 class StandardAdmin(admin.ModelAdmin):
-    list_display = ('name', 'student_count', 'created_at')
-    search_fields = ('name',)
+    # 'section' bhi add kar diya taaki admin panel mein Class aur Section dono dikhein
+    list_display = ('name', 'section', 'student_count', 'created_at') 
+    search_fields = ('name', 'section')
     ordering = ('name',)
 
     def get_queryset(self, request):
+        # Yahan 'enrolled_students' hi rehne dena kyunki model mein wahi hai
         return super().get_queryset(request).annotate(
-            total_students=Count('students', distinct=True)
+            total_students_count=Count('enrolled_students', distinct=True) 
         )
 
-    @admin.display(description="Total Students", ordering='total_students')
+    @admin.display(description="Total Students", ordering='total_students_count')
     def student_count(self, obj):
-        return obj.total_students
+        # Yahan annotate kiya hua variable use kar rahe hain
+        return obj.total_students_count
 
 
 # =================================================

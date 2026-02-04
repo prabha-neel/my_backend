@@ -102,7 +102,8 @@ class SessionCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassroomSession
         fields = ("id", "session_code", "school_id", "title", "purpose", 
-                  "target_standard", "limit", "expires_at")
+                  "target_standard", "limit", "expires_at","created_by")
+        read_only_fields = ("session_code", "created_by")
 
     def validate(self, attrs):
         user = self.context['request'].user
@@ -158,13 +159,15 @@ class SessionListSerializer(serializers.ModelSerializer):
     standard_name = serializers.CharField(source="target_standard.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     seats_remaining = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    total_limit = serializers.IntegerField(source='student_limit', read_only=True)
 
     class Meta:
         model = ClassroomSession
         fields = (
             "id", "session_code", "teacher_name", "standard_name", 
-            "student_limit", "current_student_count", "seats_remaining",
-            "expires_at", "status", "status_display"
+            "total_limit", "current_student_count", "seats_remaining",
+            "expires_at", "status", "status_display", 'created_by_name'
         )
         read_only_fields = fields
 
@@ -250,6 +253,7 @@ class JoinRequestCreateSerializer(serializers.ModelSerializer):
         )
 
 class JoinRequestListSerializer(serializers.ModelSerializer):
+    session_id = serializers.ReadOnlyField(source='session.id')
     applicant_name = serializers.CharField(source="user.get_full_name", read_only=True)
     session_info = serializers.CharField(source="session.session_code", read_only=True)
 
@@ -257,7 +261,7 @@ class JoinRequestListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = JoinRequest
-        fields = ("id", "applicant_name", "session_info", "status", "created_at","class_teacher",)
+        fields = ("id", "session_id", "applicant_name", "session_info", "status", "created_at","class_teacher",)
         read_only_fields = fields
 
 

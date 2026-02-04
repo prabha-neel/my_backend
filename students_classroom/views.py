@@ -217,28 +217,34 @@ class ClassroomSessionViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         
-        # 🎯 Base Queryset (Tumhara purana logic intact hai)
-        qs = ClassroomSession.objects.filter(is_deleted=False).annotate(
+        # 🎯 1. Base Query: select_related performance ke liye zaroori hai
+        qs = ClassroomSession.objects.all().annotate(
             db_count=Count('enrollments')
         ).select_related(
             "target_standard", "teacher__user", "organization"
         )
 
-        # 🎯 Admin Logic: Isse line 132 wala error fix ho jayega
-        if hasattr(user, "school_admin_profile") and user.school_admin_profile.exists():
-            # Org IDs ki list nikaali (Safe way for RelatedManager)
-            org_ids = user.school_admin_profile.values_list('organization_id', flat=True)
-            
-            # Filter mein 'organization' ki jagah 'organization_id__in' use karo
-            return qs.filter(organization_id__in=org_ids).annotate(
-                seats_remaining=F("student_limit") - F("db_count")
-            )
+        # 🎯 2. Admin Logic: Multi-school support ke saath
+        # Tumhari model mein related_name='school_admin_profile' hai
+        if user.role == user.Roles.SCHOOL_ADMIN:
+            # .all() isliye kyunki ForeignKey related_name ek list (Manager) return karta hai
+            admin_profiles = user.school_admin_profile.all()
+            if admin_profiles.exists():
+                org_ids = admin_profiles.values_list('organization_id', flat=True)
+                return qs.filter(organization_id__in=org_ids).annotate(
+                    seats_remaining=F("student_limit") - F("db_count")
+                )
 
-        # 🎯 Teacher Logic (Safe)
-        if hasattr(user, "teacher_profile"):
-            return qs.filter(teacher=user.teacher_profile).annotate(
-                seats_remaining=F("student_limit") - F("db_count")
-            )
+        # 🎯 3. Teacher Logic: Sirf apne sessions
+        elif user.role == user.Roles.TEACHER:
+            if hasattr(user, "teacher_profile"):
+                return qs.filter(teacher=user.teacher_profile).annotate(
+                    seats_remaining=F("student_limit") - F("db_count")
+                )
+
+        # 🎯 4. Superadmin Logic: Poore school ka data (Unlimited access)
+        elif user.is_superuser or user.role == user.Roles.SUPER_ADMIN:
+            return qs.annotate(seats_remaining=F("student_limit") - F("db_count"))
 
         return qs.none()
     
@@ -252,8 +258,8 @@ class ClassroomSessionViewSet(viewsets.ModelViewSet):
         return SessionListSerializer
 
     def perform_create(self, serializer):
-        # Serializer khud handle kar lega ki teacher save karna hai ya null
-        serializer.save()
+        # Ab 'created_by' mein logged-in user (Admin/Teacher) auto-save ho jayega
+        serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"], url_path="close")
     def close_session(self, request, pk=None):
@@ -296,6 +302,46 @@ class ClassroomSessionViewSet(viewsets.ModelViewSet):
         except Exception as e:
             # Operation fail hone par transaction apne aap rollback ho jayega
             raise ValidationError({"error": f"Operation fail ho gaya: {str(e)}"})
+        
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        
+        # Agar data khali hai (list empty hai)
+        if not response.data or (isinstance(response.data, dict) and not response.data.get('results')):
+            return Response({
+                "message": "Bhai, abhi koi session create nahi hua hai. Naya session banayein!",
+                "data": []
+            }, status=status.HTTP_200_OK)
+            
+        return response
+    
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        user = request.user
+
+        # 🎯 SMART CHECK: 
+        # Pehle dekho ki session ke paas apni organization hai? 
+        # Agar nahi (Student session), toh uske target_standard se organization uthao.
+        session_org = getattr(instance, 'organization', None)
+        
+        if not session_org and instance.target_standard:
+            session_org = instance.target_standard.organization
+
+        # 🛡️ Authorization Check
+        is_admin = False
+        if session_org and hasattr(user, 'school_admin_profile'):
+            is_admin = user.school_admin_profile.filter(organization=session_org).exists()
+
+        is_owner = (instance.created_by == user)
+
+        if not (is_admin or is_owner):
+            raise PermissionDenied("Bhai, aapke paas authority nahi hai!")
+
+        self.perform_destroy(instance)
+        return Response({"message": "Session uda diya!"}, status=status.HTTP_204_NO_CONTENT)
+
+    def perform_destroy(self, instance):
+        instance.delete()
         
 # ────────────────────────────────────────────────
 # 5. JoinRequest ViewSet
