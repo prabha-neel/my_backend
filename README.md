@@ -1,3 +1,252 @@
+# Req data & Response data
+### login req : api (post) : "baseUrl/normal_user/auth/login/"
+```
+{
+ "success": true,
+ "data": {
+   "tokens": {
+     "access": "eyJhbGciOiJI...",
+     "refresh": "eyJhbGciOiJI..."
+   },
+   "user": {
+     "id": 2,
+     "username": "prabhabenipal@gmail.com",
+     "first_name": "Prabha",
+     "email": "prabhabenipal@gmail.com",
+     "mobile": "+919876543210",
+     "role": "SCHOOL_ADMIN"
+   },
+   "organization": {
+     "id": "c299effe-64a9-4c65-abb8-b7592f819d46",
+     "admin_custom_id": "ADM-PRA-65FA",
+     "name": "Prabha International School"
+   },
+ }
+}
+
+```
+
+
+
+<!-- --------------------------------------------- -->
+
+### get dashboard Data : api (post) : "baseUrl/admin/dashboard/summary/"
+
+```
+response
+{
+ "success": true,
+ "message": "Dashboard data fetched successfully",
+ "unread_count": 12,
+ "active_sessions": 5,
+ "admin_name": "Prabha Benipal",
+ "admin_email": "prabhabenipal@gmail.com",
+ "organization_name": "Prabha International School",
+ "organization_logo": "https://api.yourschool.com/media/logos/prabha_school.png",
+ "available_organizations": [
+   {
+     "id": "c299effe-64a9-4c65-abb8-b7592f819d46",
+     "name": "Prabha International School",
+     "role": "SCHOOL_ADMIN",
+     "location": "Ghaziabad, UP"
+   },
+   {
+     "id": "d155fggt-75b0-5d76-bcc9-c8603g920e57",
+     "name": "Vikas High School",
+     "role": "TEACHER",
+     "location": "Delhi, NCR"
+   },
+   {
+     "id": "e366ghhu-86c1-6e87-cdd0-d9714h031f68",
+     "name": "Little Buds Academy",
+     "role": "SCHOOL_ADMIN",
+     "location": "Noida, Sec-62"
+   }
+ ]
+}
+
+
+```
+
+
+
+
+
+
+
+
+<!-- ------------------------------------------------------- -->
+### api invite session (post): create sesstion
+
+```
+-> req data : {request body}
+data : {
+         "title": "$role Access Key",
+         "purpose": role.toUpperCase(),
+         "limit": limit,
+         "expires_at": DateTime.now().add(Duration(hours: hours)).toIso8601String(),
+       },
+
+```
+
+```
+-> expected data  from backend : {response}
+data : {
+       "session_code": "CLS-${(1000 + limit).toString()}NEW",
+       "title": "$role Access Key",
+       "purpose": role.toUpperCase(),
+       "limit": limit,
+       "joined_count": 0,
+       "created_by": {"id": "1", "name": "You", "role": "ADMIN"},
+       "created_at": DateTime.now().toIso8601String(),
+       "expires_at": DateTime.now()
+           .add(Duration(hours: hours))
+           .toIso8601String(),
+     };
+
+```
+
+#
+
+### get all session req (get) : get all session
+```
+-> expected data  from backend : {response}
+data :  [
+      {
+         "session_code": "CLS-737DD0",
+         "title": "Staff Hiring - Phase 1",
+         "purpose": role.toUpperCase(),
+         "limit": 50,
+         "joined_count": 12,
+         "created_by": {"id": "1", "name": "Admin Vikas", "role": "ADMIN"},
+         "created_at": "2026-01-20T10:00:00Z",
+         "expires_at": "2026-12-31T23:59:59Z",
+       },
+      {
+         "session_code": "STU-123ABC",
+         "title": "Exam Prep Batch",
+         "purpose": role.toUpperCase(),
+         "limit": 30,
+         "joined_count": 30,
+         "created_by": {"id": "1", "name": "Admin Vikas", "role": "ADMIN"},
+         "created_at": "2026-01-25T14:30:00Z",
+         "expires_at": "2026-01-26T14:30:00Z", // Expired test case
+       },
+     ];
+
+```
+#
+### get admin dashboard data req (get) : getadminDashbaordData
+```
+-> expected data  from backend : {response}
+data :  {
+       "unread_count": 9, // Top bar pe chamkega
+       "active_sessions": 4,
+       "organization_name": "Vikas High School",
+       "organization_logo":
+           "https://img.freepik.com/free-vector/school-building-illustration_1284-52311.jpg",
+     };
+
+```
+#
+### login success data (post) : login success hone pe data
+```
+-> body data request.body
+body: {
+         'user_name': emailOrMobile,
+         'password': password,
+       },
+
+```
+
+```
+-> expected data  from backend : {response}
+response : {
+       "success": true,
+       "message": "Login successful! (Fake)",
+       "data": {
+         "tokens": {
+           "refresh": "fake_refresh_token_12345",
+           "access": "fake_access_token_12345",
+         },
+         "user": {
+           "id": 2,
+           "username": emailOrMobile, // Jo aapne UI mein dala
+           "first_name": "Vikas Admin",
+           "email": "admin@vikas.com",
+           "mobile": "+919876543210",
+         },
+       },
+     };
+
+```
+
+
+## 📊 6. ADMIN DASHBOARD – SUMMARY DATA
+
+### Endpoint
+
+```
+GET /api/v1/admin/dashboard-summary/
+```
+
+### Success Response (200)
+
+```json
+{
+ "unread_count": 9,
+ "active_sessions": 4,
+ "organization_name": "Vikas High School",
+ "organization_logo": "https://img.freepik.com/free-vector/school-building-illustration_1284-52311.jpg"
+}
+```
+
+---
+
+## 🚨 Common Error Response Format (IMPORTANT)
+
+Backend **har error isi format me bheje** 👇
+
+```json
+{
+ "message": "Session Expired. Please login again."
+}
+```
+
+(kyunki tumhara `ApiClient` yahi read karta hai)
+
+---
+
+## ✅ FINAL CONFIRMATION
+
+✔ Tumhara **ApiClient perfectly designed hai**
+✔ Token refresh logic correct hai
+✔ Models & RemoteDataSource aligned hai
+✔ Backend ko dene ke liye ye document **production-ready** hai
+
+---
+
+### Next bol:
+
+* Class Schedule API contract?
+* Transport / Bus route API?
+* Admission workflow API?
+* TimeTable save/load API?
+
+Tu bol 🔥
+Ab frontend–backend integration bilkul smooth jayega 💪
+
+
+
+
+#
+#
+#
+#
+#
+#
+
+
 ===== README START =====
 
 # 📘 School ERP + Classroom + EdTech Platform (Backend)

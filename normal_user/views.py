@@ -18,6 +18,7 @@ from organizations.serializers import OrganizationDetailSerializer, SchoolAdminU
 from organizations.models import Organization, SchoolAdmin
 from .models import NormalUser, Notification, create_notification
 from django.contrib.auth import authenticate 
+from organizations.serializers import OrganizationLoginSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,6 @@ class LoginView(APIView):
                 "name": u.first_name, 
                 "username": u.username,
                 "role": u.role,
-                # Safe access to organization name for student/admin
                 "school_name": u.school_admin_profile.first().organization.name if u.school_admin_profile.exists() else "General"
             } for u in request.multiple_accounts]
             
@@ -145,7 +145,14 @@ class LoginView(APIView):
 
         # 3. User Data (Admin/Student logic)
         if user.role in ['SCHOOL_ADMIN', 'SUPER_ADMIN']:
-            user_data = SchoolAdminUserSerializer(user).data
+            user_data = {
+            "id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "email": user.email,
+            "mobile": user.mobile,
+            "role": user.role
+        }
         else:
             user_data = SignupSerializer(user).data
 
@@ -156,22 +163,22 @@ class LoginView(APIView):
         # RelatedManager (.all()) se list nikalna
         profiles = user.school_admin_profile.all() 
         
-        for p in profiles:
-            schools_list.append({
-                "school_id": p.organization.id,
-                "school_name": p.organization.name,
-                "org_id": p.organization.org_id,
-                "designation": p.designation,
-                "is_active": p.is_active
-            })
+        # for p in profiles:
+        #     schools_list.append({
+        #         "school_id": p.organization.id,
+        #         "school_name": p.organization.name,
+        #         "org_id": p.organization.org_id,
+        #         "designation": p.designation,
+        #         "is_active": p.is_active
+        #     })
 
         # 5. Default Organization Detail (Pehle school ki full details)
-        if schools_list:
+        if profiles.exists():
             try:
                 # Sirf tabhi details fetch karo jab schools hon
-                from organizations.models import Organization
-                first_org = Organization.objects.get(id=schools_list[0]['school_id'])
-                org_data = OrganizationDetailSerializer(first_org).data
+                from organizations.serializers import OrganizationLoginSerializer
+                first_org = profiles.first().organization
+                org_data = OrganizationLoginSerializer(first_org).data
             except Exception as e:
                 logger.error(f"Organization Detail Fetch Error: {str(e)}")
                 org_data = None
@@ -187,7 +194,7 @@ class LoginView(APIView):
                 },
                 "user": user_data,
                 "organization": org_data,
-                "schools": schools_list
+                # "schools": schools_list
             }
         }, status=status.HTTP_200_OK)
 
@@ -409,3 +416,77 @@ class NormalUserSignupView(APIView):
             "message": "Invalid data provided.",
             "errors": serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
+    
+
+@method_decorator(ratelimit(key='user', rate='20/m', method='GET', block=True), name='dispatch')
+class DashboardDataView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # Performance: select_related database load kam karta hai
+        profiles = user.school_admin_profile.select_related('organization').all()
+        
+        schools_list = []
+        for p in profiles:
+            # Check if organization exists to avoid errors
+            if p.organization:
+                schools_list.append({
+                    "id": p.organization.id,
+                    "org_id": p.organization.org_id,
+                    "name": p.organization.name,
+                    "role": p.designation or user.role, # Role profile se lena zyada sahi hai
+                    "location": f"{p.organization.address or ''}"
+                })
+
+        first_profile = profiles.first()
+        first_org = first_profile.organization if first_profile else None
+        
+        return Response({
+            "success": True,
+            "message": "Dashboard data fetched successfully",
+            "unread_count": 12,
+            "active_sessions": 5,
+            "admin_name": f"{user.first_name} {user.last_name}".strip(),
+            "admin_email": user.email,
+            "school_id": first_org.id if first_org else None,
+            "org_id": first_org.org_id if first_org else None,
+            "organization_name": first_org.name if first_org else None,
+            # Logo URL fix: media handling safe rahegi
+            "organization_logo": request.build_absolute_uri(first_org.logo.url) if first_org and first_org.logo else None,
+            "schoolsList": schools_list
+        })
+    
+
+# This view has made by shivam sir. i wrote this line to remind me. 
+
+@method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True), name='dispatch')
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # Base user data
+        serializer = UserIdentitySerializer(user)
+        user_data = serializer.data
+        
+        # Extra: Agar SCHOOL_ADMIN hai toh organizations bhi bhej do
+        schools = []
+        if user.role == 'SCHOOL_ADMIN':
+            profiles = user.school_admin_profile.all()
+            schools = [{
+                "id": p.organization.id,
+                "name": p.organization.name,
+                "org_id": p.organization.org_id,
+                "designation": p.designation
+            } for p in profiles]
+
+        return Response({
+            "success": True,
+            "data": {
+                "user": user_data,
+                "schools": schools # Dashboard pe redirect karne ke liye kaam aayega
+            }
+        }, status=status.HTTP_200_OK)

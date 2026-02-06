@@ -133,4 +133,17 @@ class OrganizationDetailSerializer(serializers.ModelSerializer):
         ]
 
 
-    
+# organizations/serializers.py mein niche add karein
+
+class OrganizationLoginSerializer(serializers.ModelSerializer):
+    """Login response ko super light rakhne ke liye"""
+    admin_custom_id = serializers.CharField(source='admin.admin_custom_id', read_only=True)
+    status_display = serializers.CharField(source='is_verified_display', read_only=True)
+
+    class Meta:
+        model = Organization
+        fields = [
+            'id', 'admin_custom_id', 'status_display', 'name', 
+            'org_id', 'affiliation_board', 'logo', 
+            'contact_email', 'is_active', 'is_verified'
+        ]

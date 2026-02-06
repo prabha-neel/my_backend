@@ -207,3 +207,13 @@ class AccountDeleteSerializer(serializers.Serializer):
         write_only=True, 
         style={'input_type': 'password'}
     )
+
+# shivam sir ne banaya ye serializer. for remind purpose i have added this line
+
+class UserIdentitySerializer(serializers.ModelSerializer):
+    # Role-based properties check karne ke liye helper
+    is_school_admin = serializers.BooleanField(read_only=True)
+    
+    class Meta:
+        model = NormalUser
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'mobile', 'role', 'is_school_admin']

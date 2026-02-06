@@ -31,4 +31,10 @@ urlpatterns = [
 
     # Naya wala (Normal VijayLaxmi users ke liye)
     path('auth/signup/user/', views.NormalUserSignupView.as_view(), name='user-signup'),
+
+    # --- DASHBOARD & INITIAL DATA ---
+    path('me/dashboard-init/', views.DashboardDataView.as_view(), name='dashboard-init'),
+
+    # shivam sir has made this url.
+    path('me/', views.UserMeView.as_view(), name='user-me'),
 ]
