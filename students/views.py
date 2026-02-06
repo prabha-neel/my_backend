@@ -86,25 +86,35 @@ class StudentViewSet(viewsets.GenericViewSet):
     # 1. Minimal list for normal exploration/search
     # ────────────────────────────────────────────────
     @action(detail=False, methods=["GET"], url_path="explore")
-    @method_decorator(cache_page(60 * 3))
+    # @method_decorator(cache_page(60 * 3))  <-- Filhaal ise hata de, warna data update nahi dikhega
     def explore(self, request):
         """
-        Anyone can explore active students (normal_user feature)
-        Filters by organization, name or mobile.
+        Active students ko explore karne ke liye with Pagination.
         """
         q = request.query_params.get("q")
         org_id = request.query_params.get("organization_id")
-        qs = self.queryset.filter(is_active=True)
+        
+        # select_related zaroor lagana performance ke liye
+        qs = self.queryset.filter(is_active=True).select_related("user", "organization")
 
         if org_id:
             qs = qs.filter(organization_id=org_id)
         if q:
-            qs = qs.filter(Q(user__first_name__icontains=q) |
-                           Q(user__last_name__icontains=q) |
-                           Q(user__mobile__icontains=q) |
-                           Q(student_unique_id__icontains=q))
+            qs = qs.filter(
+                Q(user__first_name__icontains=q) |
+                Q(user__last_name__icontains=q) |
+                Q(user__mobile__icontains=q) |
+                Q(student_unique_id__icontains=q)
+            )
 
-        qs = qs.select_related("user", "organization")[:50]
+        # Pagination Magic
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = StudentMinimalSerializer(page, many=True)
+            # Ye 'count', 'next', 'previous' aur 'results' bhejega
+            return self.get_paginated_response(serializer.data)
+
+        # Fallback agar pagination configuration mein na ho
         serializer = StudentMinimalSerializer(qs, many=True)
         return Response(serializer.data)
 

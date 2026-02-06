@@ -63,19 +63,20 @@ class StudentProfileAdmin(admin.ModelAdmin):
     
     @admin.display(description=_("Student Name"), ordering="user__first_name")
     def full_name_link(self, obj):
-        # Yahan humne aapke Custom User model (NormalUser) ke admin link ka use kiya hai
         try:
             url = reverse("admin:normal_user_normaluser_change", args=(obj.user.id,))
         except:
-            url = "#" # Fallback agar admin path alag ho
+            url = "#"
         name = obj.user.get_full_name() or obj.user.username
+        # Yahan do {} hain, ek href ke liye aur ek text ke liye
         return format_html('<a href="{}" style="font-weight: bold; color: #447e9b;">{}</a>', url, name)
 
     @admin.display(description=_("Status"))
     def is_active_badge(self, obj):
         if obj.is_active:
-            return format_html('<span style="background: #28a745; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.85em;">Active</span>')
-        return format_html('<span style="background: #dc3545; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.85em;">Inactive</span>')
+            # Yahan {} lagana zaroori hai taaki Django ko pata chale text kahan daalna hai
+            return format_html('<span style="background: #28a745; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.85em;">{}</span>', "Active")
+        return format_html('<span style="background: #dc3545; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.85em;">{}</span>', "Inactive")
 
     # ─── Actions ────────────────────────────────────────────────────────────
     @admin.action(description=_("Mark selected as active"))
