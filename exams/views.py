@@ -14,9 +14,10 @@ class ExamViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrTeacher]
 
     def get_serializer_class(self):
-        # Create (POST) ke liye validation wala serializer, View (GET) ke liye detail wala
-        if self.action == 'create':
+        # Create, Update aur Patch ke liye logic wala serializer
+        if self.action in ['create', 'update', 'partial_update']:
             return ExamCreateSerializer
+        # Sirf List aur Retrieve ke liye detail wala
         return ExamDetailSerializer
 
     def get_queryset(self):
@@ -144,3 +145,7 @@ class ExamViewSet(viewsets.ModelViewSet):
         # Context mein inject kar do
         context.update({"school_id_header": school_id})
         return context
+    
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        instance.refresh_from_db() # Taaki serializer ko updated data mile
