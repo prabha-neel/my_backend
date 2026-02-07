@@ -272,6 +272,11 @@ class ClassroomSession(models.Model):
             # 🟢 TEACHER RECRUITMENT LOGIC
             from teachers.models import Teacher
             
+            # --- These lines for Role Update ---
+            user = join_request.user
+            user.role = 'TEACHER'  # User table mein role badla
+            user.save(update_fields=['role'])
+            
             profile, created = Teacher.objects.get_or_create(
                 user=join_request.user,
                 defaults={
@@ -293,6 +298,9 @@ class ClassroomSession(models.Model):
             import datetime
             import random
             
+            join_request.user.role = 'STUDENT'
+            join_request.user.save(update_fields=['role'])
+
             # 1. Check if profile already exists
             student = StudentProfile.objects.filter(user=join_request.user).first()
 
