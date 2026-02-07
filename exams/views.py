@@ -21,41 +21,46 @@ class ExamViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        
-        # 1. 🔍 Organization Fetching Logic
-        # Chunki NormalUser mein direct field nahi hai, hum profile se nikalenge
-        org = None
-        
+        school_id_from_header = self.request.headers.get('school-id') or self.request.headers.get('school_id')
+        queryset = Exam.objects.none()
+
+        # 1. STUDENT LOGIC (Same rahega)
         if user.role == 'STUDENT':
             from students.models import StudentProfile
             try:
                 profile = StudentProfile.objects.get(user=user)
-                org = profile.organization # Student ki org uski profile se
-                base_queryset = Exam.objects.filter(organization=org, target_standard=profile.current_standard)
+                # Student ko sirf uski class aur uske school ka data dikhega
+                queryset = Exam.objects.filter(
+                    organization=profile.organization, 
+                    target_standard=profile.current_standard,
+                    is_active=True
+                )
             except StudentProfile.DoesNotExist:
                 return Exam.objects.none()
-        
+
+        # 2. ADMIN/TEACHER LOGIC (Header Support ke saath)
         else:
-            # School Admin ya Teacher ke liye Organization nikalna
-            # school_admin_profile tune models.py mein related_name diya hai
-            admin_profile = user.school_admin_profile.filter(is_active=True).first()
+            # Header se school_id uthao
+            school_id_from_header = self.request.headers.get('school_id')
+            
+            # Check karo ki kya user is school se linked hai
+            if school_id_from_header:
+                admin_profile = user.school_admin_profile.filter(organization_id=school_id_from_header).first()
+            else:
+                # Agar header nahi hai, toh default active school uthao (purana logic)
+                admin_profile = user.school_admin_profile.filter(is_active=True).first()
+
             if admin_profile:
-                org = admin_profile.organization
-                base_queryset = Exam.objects.filter(organization=org)
+                queryset = Exam.objects.filter(organization=admin_profile.organization, is_active=True)
             else:
                 return Exam.objects.none()
 
-        # 2. 🛡️ Base Security & Optimization
-        # Prefetch subjects taaki database queries kam ho (Performance)
-        queryset = base_queryset.filter(is_active=True).prefetch_related('subjects').order_by('-start_date')
+        # 3. CLASS FILTER & PERFORMANCE (Same rahega)
+        class_name = self.request.query_params.get('class_name')
+        if class_name and user.role != 'STUDENT':
+            queryset = queryset.filter(target_standard__name=class_name)
 
-        # 3. ✅ Admin/Teacher Zone: Optional Filter by class name (?class_name=Class 10)
-        if user.role != 'STUDENT':
-            class_name = self.request.query_params.get('class_name')
-            if class_name:
-                queryset = queryset.filter(target_standard__name=class_name)
-
-        return queryset
+        return queryset.prefetch_related('subjects').order_by('-start_date')
 
     def perform_create(self, serializer):
         # Serializer ke create method mein humne logic handle kiya hai
@@ -127,3 +132,15 @@ class ExamViewSet(viewsets.ModelViewSet):
             "status": "success",
             "message": f"Exam '{exam_title}' and all related subjects have been permanently deleted."
         }, status=status.HTTP_200_OK)
+    
+    def get_serializer_context(self):
+        """
+        Ye method ensure karega ki 'school_id' hamesha serializer ke andar available rahe.
+        """
+        context = super().get_serializer_context()
+        # Header se school_id uthao
+        school_id = self.request.headers.get('school_id') or self.request.headers.get('school-id')
+        
+        # Context mein inject kar do
+        context.update({"school_id_header": school_id})
+        return context
