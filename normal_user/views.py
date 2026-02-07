@@ -459,7 +459,7 @@ class DashboardDataView(APIView):
         })
     
 
-# This view has made by shivam sir. i wrote this line to remind me. 
+# This view has made by shivam sir. i wrote this line to remind me.  
 
 @method_decorator(ratelimit(key='ip', rate='5/m', method='POST', block=True), name='dispatch')
 class UserMeView(APIView):

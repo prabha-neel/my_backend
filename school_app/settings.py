@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'drf_spectacular',   #<--- This line is for Schema documentation, Hit this URL :-> http://127.0.0.1:8000/api/schema/docs/
 
     # Local apps
+    'exams',
     'normal_user',
     'organizations',
     'teachers',
