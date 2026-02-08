@@ -185,13 +185,3 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.recipient.username} - {self.title}"
-    
-
-    # signup hone par notification ke liye ye functioin hai
-def create_notification(user, title, message, n_type='info'):
-    return Notification.objects.create(
-        recipient=user,
-        title=title,
-        message=message,
-        notification_type=n_type
-    )

@@ -22,13 +22,6 @@ urlpatterns = [
     # Soft delete (using 'me' indicates current authenticated user)
     path('me/delete/', views.UserSoftDeleteView.as_view(), name='user-soft-delete'),
 
-    # --- NOTIFICATION SYSTEM ---
-    # List all notifications
-    path('notifications/', views.NotificationListView.as_view(), name='notification-list'),
-    
-    # Mark specific notification as read (using <int:pk>)
-    path('notifications/<int:pk>/mark-read/', views.MarkNotificationReadView.as_view(), name='notification-mark-read'),
-
     # Naya wala (Normal VijayLaxmi users ke liye)
     path('auth/signup/user/', views.NormalUserSignupView.as_view(), name='user-signup'),
 

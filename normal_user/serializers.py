@@ -5,7 +5,6 @@ from django.core.validators import RegexValidator
 from .models import NormalUser
 import re
 import uuid
-from .models import Notification
 import random
 import string
 
@@ -102,13 +101,6 @@ class LoginSerializer(serializers.Serializer):
 
         # 4. Case: Fail (Galat Password ya No User Found)
         raise serializers.ValidationError("Invalid credentials. Please check your username/email/mobile or password.")
-    
-
-class NotificationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Notification
-        fields = ['id', 'title', 'message', 'notification_type', 'is_read', 'created_at']
-        read_only_fields = ['id', 'created_at']
 
 
 class SchoolAdminUserSerializer(serializers.ModelSerializer):

@@ -49,4 +49,5 @@ urlpatterns = [
         name='swagger-ui',
     ),
     path('api/v1/exams/', include('exams.urls')),
+    path('api/v1/attendance/', include('attendance.urls')),
 ]

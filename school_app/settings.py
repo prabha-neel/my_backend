@@ -47,7 +47,8 @@ INSTALLED_APPS = [
     'teachers',
     'students',
     'parents',
-    'students_classroom', 
+    'students_classroom',
+    'attendance', 
 ]
 
 # MIDDLEWARE - CORS sabse upar hona chahiye

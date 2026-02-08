@@ -11,12 +11,10 @@ from django_ratelimit.decorators import ratelimit
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.throttling import UserRateThrottle
 import logging
-from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer, NotificationSerializer, NormalUserSignupSerializer
-from .models import NormalUser, Notification
-from .utils import create_notification
+from .serializers import SignupSerializer, LoginSerializer, AccountDeleteSerializer, NormalUserSignupSerializer
+from .models import NormalUser
 from organizations.serializers import OrganizationDetailSerializer, SchoolAdminUserSerializer
 from organizations.models import Organization, SchoolAdmin
-from .models import NormalUser, Notification, create_notification
 from django.contrib.auth import authenticate 
 from organizations.serializers import OrganizationLoginSerializer
 
@@ -72,14 +70,6 @@ class SignupView(APIView):
                         organization=new_org,
                         designation="Owner/Founder"
                     )
-
-                # 3. Notification (Bande ko welcome bolo)
-                create_notification(
-                    user, 
-                    "Welcome Principal! 🏫", 
-                    f"Organization {org_name} has been registered successfully.", 
-                    "success"
-                )
 
                 refresh = RefreshToken.for_user(user)
                 return Response({
@@ -317,28 +307,6 @@ class UserSoftDeleteView(APIView):
             "success": True,
             "message": "Account deleted successfully. We're sad to see you go!"
         }, status=status.HTTP_200_OK)
-
-
-class NotificationListView(generics.ListAPIView):
-    serializer_class = NotificationSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        # Sirf wahi notifications dikhao jo logged-in user ke hain
-        return Notification.objects.filter(recipient=self.request.user)
-
-class MarkNotificationReadView(generics.UpdateAPIView):
-    serializer_class = NotificationSerializer
-    permission_classes = [IsAuthenticated]
-
-    def patch(self, request, pk):
-        try:
-            notification = Notification.objects.get(pk=pk, recipient=request.user)
-            notification.is_read = True
-            notification.save()
-            return Response({"success": True, "message": "Marked as read"})
-        except Notification.DoesNotExist:
-            return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
     
 
 @extend_schema(
@@ -368,17 +336,6 @@ class NormalUserSignupView(APIView):
             try:
                 user = serializer.save()
                 
-                # 1. Welcome Notification
-                try:
-                    create_notification(
-                        user, 
-                        "Welcome! 🎉", 
-                        f"Hello {user.first_name}, your account is ready.", 
-                        "success"
-                    )
-                except Exception as e:
-                    logger.error(f"Notification failed for {user.email}: {str(e)}")
-
                 # 2. JWT Generation
                 refresh = RefreshToken.for_user(user)
                 
